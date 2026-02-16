@@ -1,0 +1,22 @@
+[project]
+name = "make-notes"
+version = "0.1.0"
+description = "Speech-to-notes: transcribe, diarize, and summarize"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "pyannote.audio>=3.1",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+mn = "mn.cli:main"
+mn-transcribe = "mn.cli:transcribe"
+mn-fmt = "mn.cli:fmt"
+mn-summarize = "mn.cli:summarize"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,68 @@
+"""Summarize a transcript using a plain-text template and an LLM.
+
+Templates are text files with $-placeholders (string.Template syntax):
+
+    $transcript  — the full formatted transcript
+    $speakers    — comma-separated list of speakers
+
+This talks to any OpenAI-compatible chat completions endpoint,
+so it works with ollama, vllm, together, openai, lmstudio, etc.
+
+Configure via environment or CLI flags:
+
+    MN_API_BASE  (default: http://localhost:11434/v1  — ollama)
+    MN_MODEL     (default: llama3)
+    MN_API_KEY   (default: ollama)
+"""
+
+import os
+from pathlib import Path
+from string import Template
+
+import httpx
+
+from .fmt import fmt
+from .transcribe import Segment
+
+
+def load_template(path):
+    """Read a template file from disk."""
+    return Path(path).read_text()
+
+
+def render(template_text, segments):
+    """Fill $placeholders in a template with transcript data."""
+    transcript = fmt(segments, timestamps=True)
+    speakers = ", ".join(sorted(set(s.speaker for s in segments)))
+    return Template(template_text).safe_substitute(
+        transcript=transcript,
+        speakers=speakers,
+    )
+
+
+def complete(prompt, base_url=None, model=None, api_key=None):
+    """Send a prompt to an OpenAI-compatible chat completions endpoint."""
+    base_url = base_url or os.environ.get("MN_API_BASE",
+                                           "http://localhost:11434/v1")
+    model = model or os.environ.get("MN_MODEL", "llama3")
+    api_key = api_key or os.environ.get("MN_API_KEY", "ollama")
+
+    resp = httpx.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+        },
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=120.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def summarize(segments, template_path, **llm_kwargs):
+    """Segments + template file → summary text from LLM."""
+    template_text = load_template(template_path)
+    prompt = render(template_text, segments)
+    return complete(prompt, **llm_kwargs)

@@ -1,0 +1,3 @@
+"""make-notes: speech-to-notes pipeline."""
+
+__version__ = "0.1.0"
