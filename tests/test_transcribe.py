@@ -1,8 +1,8 @@
-"""Tests for mn.transcribe — alignment, serialization, and edge cases."""
+"""Tests for mn.transcribe — alignment, serialization, labeling, and edge cases."""
 
 import json
 
-from mn.transcribe import Segment, align, from_jsonl, to_jsonl
+from mn.transcribe import Segment, align, from_jsonl, label_speakers, to_jsonl
 
 
 # -- Fixtures ---------------------------------------------------------------
@@ -223,3 +223,66 @@ class TestSegment:
         assert s.text == "test"
         assert s.start == 1.5
         assert s.end == 3.0
+
+
+# -- label_speakers() -------------------------------------------------------
+
+
+class TestLabelSpeakers:
+
+    def test_basic_labeling(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, "Therapist,Client")
+        assert result[0].speaker == "Therapist"
+        assert result[1].speaker == "Client"
+
+    def test_preserves_text_and_timestamps(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, "A,B")
+        assert result[0].text == segs[0].text
+        assert result[0].start == segs[0].start
+        assert result[0].end == segs[0].end
+
+    def test_list_input(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, ["Therapist", "Client"])
+        assert result[0].speaker == "Therapist"
+
+    def test_fewer_names_than_speakers(self):
+        segs = [
+            Segment("A", "one", 0.0, 1.0),
+            Segment("B", "two", 1.0, 2.0),
+            Segment("C", "three", 2.0, 3.0),
+        ]
+        result = label_speakers(segs, "Therapist,Client")
+        assert result[0].speaker == "Therapist"
+        assert result[1].speaker == "Client"
+        assert result[2].speaker == "C"  # unmapped, keeps original
+
+    def test_more_names_than_speakers(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, "A,B,C,D")
+        assert result[0].speaker == "A"
+        assert result[1].speaker == "B"
+
+    def test_order_of_first_appearance(self):
+        segs = [
+            Segment("B", "first", 0.0, 1.0),
+            Segment("A", "second", 1.0, 2.0),
+            Segment("B", "third", 2.0, 3.0),
+        ]
+        result = label_speakers(segs, "First,Second")
+        assert result[0].speaker == "First"   # B appeared first
+        assert result[1].speaker == "Second"  # A appeared second
+        assert result[2].speaker == "First"   # B again
+
+    def test_returns_new_list(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, "A,B")
+        assert result is not segs
+
+    def test_whitespace_in_names_stripped(self):
+        segs = _sample_segments()
+        result = label_speakers(segs, " Therapist , Client ")
+        assert result[0].speaker == "Therapist"
+        assert result[1].speaker == "Client"

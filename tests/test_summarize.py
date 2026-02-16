@@ -8,7 +8,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from mn.summarize import complete, load_template, render, summarize
+from mn.summarize import _duration, complete, load_template, render, summarize
 from mn.transcribe import Segment
 
 
@@ -89,6 +89,55 @@ class TestRender:
     def test_dollar_literal_preserved(self):
         result = render("costs $$5\n$transcript", _segments())
         assert "$5" in result
+
+    def test_substitutes_date_default(self):
+        from datetime import date
+        result = render("Date: $date", _segments())
+        assert date.today().isoformat() in result
+
+    def test_substitutes_date_explicit(self):
+        result = render("Date: $date", _segments(), session_date="2026-01-15")
+        assert "2026-01-15" in result
+
+    def test_substitutes_duration(self):
+        segs = [
+            Segment("A", "start", 0.0, 30.0),
+            Segment("B", "end", 30.0, 125.0),
+        ]
+        result = render("Duration: $duration", segs)
+        assert "2:05" in result
+
+    def test_substitutes_client_name_default(self):
+        result = render("Client: $client_name", _segments())
+        assert "Client" in result
+
+    def test_substitutes_client_name_explicit(self):
+        result = render("Client: $client_name", _segments(), client_name="J.D.")
+        assert "J.D." in result
+
+
+# -- _duration() ------------------------------------------------------------
+
+
+class TestDuration:
+
+    def test_basic(self):
+        segs = [Segment("A", "x", 0.0, 60.0)]
+        assert _duration(segs) == "1:00"
+
+    def test_multiple_segments(self):
+        segs = [
+            Segment("A", "x", 10.0, 30.0),
+            Segment("B", "y", 30.0, 135.0),
+        ]
+        assert _duration(segs) == "2:05"
+
+    def test_empty(self):
+        assert _duration([]) == "0:00"
+
+    def test_zero_duration(self):
+        segs = [Segment("A", "x", 5.0, 5.0)]
+        assert _duration(segs) == "0:00"
 
 
 # -- complete() with mocked HTTP -------------------------------------------
@@ -197,7 +246,10 @@ class TestSummarize:
 class TestTemplateFiles:
     """Verify that the shipped templates are valid."""
 
-    @pytest.fixture(params=["soap.txt", "dap.txt", "birp.txt", "progress.txt"])
+    @pytest.fixture(params=[
+        "soap.txt", "dap.txt", "birp.txt", "progress.txt",
+        "cbt-soap.txt", "psychodynamic.txt", "intake.txt",
+    ])
     def template_path(self, request):
         p = Path(__file__).parent.parent / "templates" / request.param
         assert p.exists(), f"Template missing: {p}"

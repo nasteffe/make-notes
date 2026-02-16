@@ -2,8 +2,11 @@
 
 Templates are text files with $-placeholders (string.Template syntax):
 
-    $transcript  — the full formatted transcript
-    $speakers    — comma-separated list of speakers
+    $transcript    — the full formatted transcript
+    $speakers      — comma-separated list of speakers
+    $date          — session date (default: today)
+    $duration      — session duration derived from timestamps
+    $client_name   — client name if provided
 
 This talks to any OpenAI-compatible chat completions endpoint,
 so it works with ollama, vllm, together, openai, lmstudio, etc.
@@ -16,6 +19,7 @@ Configure via environment or CLI flags:
 """
 
 import os
+from datetime import date
 from pathlib import Path
 from string import Template
 
@@ -30,13 +34,27 @@ def load_template(path):
     return Path(path).read_text()
 
 
-def render(template_text, segments):
+def _duration(segments):
+    """Compute human-readable duration from segment timestamps."""
+    if not segments:
+        return "0:00"
+    start = min(s.start for s in segments)
+    end = max(s.end for s in segments)
+    total = int(end - start)
+    m, s = divmod(total, 60)
+    return f"{m}:{s:02d}"
+
+
+def render(template_text, segments, client_name=None, session_date=None):
     """Fill $placeholders in a template with transcript data."""
     transcript = fmt(segments, timestamps=True)
     speakers = ", ".join(sorted(set(s.speaker for s in segments)))
     return Template(template_text).safe_substitute(
         transcript=transcript,
         speakers=speakers,
+        date=session_date or date.today().isoformat(),
+        duration=_duration(segments),
+        client_name=client_name or "Client",
     )
 
 
@@ -61,8 +79,10 @@ def complete(prompt, base_url=None, model=None, api_key=None):
     return resp.json()["choices"][0]["message"]["content"]
 
 
-def summarize(segments, template_path, **llm_kwargs):
+def summarize(segments, template_path, client_name=None, session_date=None,
+              **llm_kwargs):
     """Segments + template file → summary text from LLM."""
     template_text = load_template(template_path)
-    prompt = render(template_text, segments)
+    prompt = render(template_text, segments, client_name=client_name,
+                    session_date=session_date)
     return complete(prompt, **llm_kwargs)

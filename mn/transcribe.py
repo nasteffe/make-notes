@@ -11,6 +11,7 @@ for the full pipeline. Output is JSON lines — one segment per line:
 import json
 import os
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -139,6 +140,34 @@ def transcribe_and_diarize(audio_path, model_size="base", device="cpu",
     speakers = diarize(audio_path, num_speakers, min_speakers,
                        max_speakers, hf_token)
     return align(words, speakers)
+
+
+# -- Speaker labeling ----------------------------------------------------
+
+
+def label_speakers(segments, names):
+    """Replace generic SPEAKER_XX labels with human names.
+
+    names is a comma-separated string or list: "Therapist,Client"
+    Speakers are assigned in order of first appearance.
+    """
+    if isinstance(names, str):
+        names = [n.strip() for n in names.split(",")]
+
+    # Map each unique speaker label → name, in order of first appearance.
+    seen = []
+    for s in segments:
+        if s.speaker not in seen:
+            seen.append(s.speaker)
+
+    mapping = {}
+    for i, original in enumerate(seen):
+        mapping[original] = names[i] if i < len(names) else original
+
+    return [
+        Segment(mapping.get(s.speaker, s.speaker), s.text, s.start, s.end)
+        for s in segments
+    ]
 
 
 # -- Serialization -------------------------------------------------------
