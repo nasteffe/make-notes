@@ -248,6 +248,8 @@ class TestTranscribeCli:
                 min_speakers=2,
                 max_speakers=4,
                 hf_token="hf_test",
+                _whisper=None,
+                _diarizer=None,
             )
 
 
@@ -394,6 +396,8 @@ class TestMainCli:
                 min_speakers=None,
                 max_speakers=None,
                 hf_token="hf_abc",
+                _whisper=None,
+                _diarizer=None,
             )
 
 
@@ -414,14 +418,47 @@ class TestBatchCli:
             "--transcript-only",
         ])
 
-        with patch("mn.transcribe.transcribe_and_diarize",
-                    return_value=_sample_segments()):
-            cli.batch()
+        with patch("mn.transcribe.load_whisper", return_value="whisper_mock"):
+            with patch("mn.transcribe.load_diarizer", return_value="diarizer_mock"):
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            return_value=_sample_segments()):
+                    cli.batch()
 
         out_file = tmp_path / "session1.txt"
         assert out_file.exists()
         content = out_file.read_text()
         assert "SPEAKER_00" in content
+
+    def test_models_loaded_once_for_batch(self, capsys, monkeypatch, tmp_path):
+        """Whisper and diarizer should be loaded once, not per file."""
+        for name in ["a.wav", "b.wav", "c.wav"]:
+            (tmp_path / name).write_bytes(b"fake")
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-batch", str(tmp_path),
+            "--template", str(template),
+            "--transcript-only",
+        ])
+
+        with patch("mn.transcribe.load_whisper",
+                    return_value="w") as whisper_load:
+            with patch("mn.transcribe.load_diarizer",
+                        return_value="d") as diarizer_load:
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            return_value=_sample_segments()) as tad:
+                    cli.batch()
+
+        # Models loaded exactly once, not 3 times.
+        whisper_load.assert_called_once()
+        diarizer_load.assert_called_once()
+        # But transcribe_and_diarize called 3 times (once per file).
+        assert tad.call_count == 3
+        # Each call should pass through the pre-loaded models.
+        for call in tad.call_args_list:
+            assert call[1]["_whisper"] == "w"
+            assert call[1]["_diarizer"] == "d"
 
     def test_output_dir(self, capsys, monkeypatch, tmp_path):
         audio_dir = tmp_path / "audio"
@@ -439,9 +476,11 @@ class TestBatchCli:
             "--transcript-only",
         ])
 
-        with patch("mn.transcribe.transcribe_and_diarize",
-                    return_value=_sample_segments()):
-            cli.batch()
+        with patch("mn.transcribe.load_whisper", return_value="w"):
+            with patch("mn.transcribe.load_diarizer", return_value="d"):
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            return_value=_sample_segments()):
+                    cli.batch()
 
         assert (out_dir / "s.txt").exists()
 

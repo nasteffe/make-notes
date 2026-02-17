@@ -65,8 +65,11 @@ def _add_llm_args(p):
                    help="session date for template $date placeholder (YYYY-MM-DD)")
 
 
-def _transcribe_audio(args):
-    """Shared transcription logic for transcribe and main commands."""
+def _transcribe_audio(args, _whisper=None, _diarizer=None):
+    """Shared transcription logic for transcribe and main commands.
+
+    Pass _whisper/_diarizer to reuse pre-loaded models (batch mode).
+    """
     segments = _transcribe.transcribe_and_diarize(
         args.audio,
         model_size=args.model,
@@ -76,6 +79,8 @@ def _transcribe_audio(args):
         min_speakers=args.min_speakers,
         max_speakers=args.max_speakers,
         hf_token=args.hf_token,
+        _whisper=_whisper,
+        _diarizer=_diarizer,
     )
     if args.speakers:
         segments = _transcribe.label_speakers(segments, args.speakers)
@@ -305,10 +310,17 @@ def batch():
     output_dir = Path(args.output_dir) if args.output_dir else audio_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Pre-load models once for the whole batch.
+    print("Loading models...", file=sys.stderr)
+    whisper = _transcribe.load_whisper(
+        args.model, args.device, args.compute_type,
+    )
+    diarizer = _transcribe.load_diarizer(args.hf_token)
+
     for audio_path in files:
         print(f"Processing {audio_path.name}...", file=sys.stderr)
         args.audio = str(audio_path)
-        segments = _transcribe_audio(args)
+        segments = _transcribe_audio(args, _whisper=whisper, _diarizer=diarizer)
 
         if args.redact:
             names = ([n.strip() for n in args.redact_names.split(",")]

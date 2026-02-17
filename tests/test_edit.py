@@ -89,6 +89,34 @@ class TestFromEditable:
         result = from_editable(text)
         assert "First line.\nSecond line." == result[0].text
 
+    def test_body_with_blank_lines(self):
+        text = (
+            "[00:00 → 00:05] A:\n"
+            "First paragraph.\n"
+            "\n"
+            "Second paragraph.\n"
+            "\n"
+            "[00:05 → 00:10] B:\n"
+            "Next speaker.\n"
+        )
+        result = from_editable(text)
+        assert len(result) == 2
+        assert "First paragraph.\n\nSecond paragraph." == result[0].text
+        assert result[1].text == "Next speaker."
+
+    def test_body_with_multiple_blank_lines(self):
+        text = (
+            "[00:00 → 00:05] A:\n"
+            "Line one.\n"
+            "\n"
+            "\n"
+            "\n"
+            "Line two.\n"
+        )
+        result = from_editable(text)
+        assert len(result) == 1
+        assert "Line one.\n\n\n\nLine two." == result[0].text
+
     def test_empty_string(self):
         assert from_editable("") == []
 

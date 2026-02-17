@@ -19,11 +19,16 @@ Configure via environment or CLI flags:
 """
 
 import os
+import sys
 from datetime import date
 from pathlib import Path
 from string import Template
 
 import httpx
+
+# Rough chars-per-token ratio for English text. Used for warnings only.
+_CHARS_PER_TOKEN = 4
+_TOKEN_WARNING_THRESHOLD = 6000
 
 from .fmt import fmt
 from .transcribe import Segment
@@ -58,12 +63,26 @@ def render(template_text, segments, client_name=None, session_date=None):
     )
 
 
+def _estimate_tokens(text):
+    """Rough token estimate: len(text) / 4. For warnings only."""
+    return len(text) // _CHARS_PER_TOKEN
+
+
 def complete(prompt, base_url=None, model=None, api_key=None):
     """Send a prompt to an OpenAI-compatible chat completions endpoint."""
     base_url = base_url or os.environ.get("MN_API_BASE",
                                            "http://localhost:11434/v1")
     model = model or os.environ.get("MN_MODEL", "llama3")
     api_key = api_key or os.environ.get("MN_API_KEY", "ollama")
+
+    est = _estimate_tokens(prompt)
+    if est > _TOKEN_WARNING_THRESHOLD:
+        print(
+            f"Warning: prompt is ~{est} tokens. Models with small context "
+            f"windows may truncate or fail. Consider using a larger model "
+            f"or splitting the session.",
+            file=sys.stderr,
+        )
 
     resp = httpx.post(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -73,7 +92,7 @@ def complete(prompt, base_url=None, model=None, api_key=None):
             "temperature": 0.3,
         },
         headers={"Authorization": f"Bearer {api_key}"},
-        timeout=120.0,
+        timeout=300.0,
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]

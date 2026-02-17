@@ -48,24 +48,35 @@ def _parse_time(ts):
 
 
 def from_editable(text):
-    """Human-editable text → list of Segments."""
+    """Human-editable text → list of Segments.
+
+    Splits on header lines rather than blank lines, so body text can
+    safely contain blank lines without breaking the parse.
+    """
     segments = []
-    blocks = re.split(r"\n\n+", text.strip())
+    lines = text.split("\n")
 
-    for block in blocks:
-        lines = block.strip().split("\n")
-        if not lines:
-            continue
+    # Collect (header_match, start_line_index) pairs.
+    headers = []
+    for i, line in enumerate(lines):
+        m = _HEADER.match(line)
+        if m:
+            headers.append((m, i))
 
-        m = _HEADER.match(lines[0])
-        if not m:
-            continue
+    for idx, (m, start_i) in enumerate(headers):
+        # Body extends from line after header to line before next header.
+        if idx + 1 < len(headers):
+            end_i = headers[idx + 1][1]
+        else:
+            end_i = len(lines)
 
-        start = float(_parse_time(m.group(1)))
-        end = float(_parse_time(m.group(2)))
-        speaker = m.group(3).strip()
-        body = "\n".join(lines[1:]).strip()
-        segments.append(Segment(speaker, body, start, end))
+        body = "\n".join(lines[start_i + 1:end_i]).strip()
+        segments.append(Segment(
+            m.group(3).strip(),
+            body,
+            float(_parse_time(m.group(1))),
+            float(_parse_time(m.group(2))),
+        ))
 
     return segments
 

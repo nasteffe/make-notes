@@ -8,7 +8,15 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from mn.summarize import _duration, complete, load_template, render, summarize
+from mn.summarize import (
+    _TOKEN_WARNING_THRESHOLD,
+    _duration,
+    _estimate_tokens,
+    complete,
+    load_template,
+    render,
+    summarize,
+)
 from mn.transcribe import Segment
 
 
@@ -208,6 +216,41 @@ class TestComplete:
             complete("prompt", base_url="http://test/v1", model="m", api_key="k")
             body = mock.call_args[1]["json"]
             assert body["temperature"] == 0.3
+
+    def test_timeout_is_300(self):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
+            complete("prompt", base_url="http://test/v1", model="m", api_key="k")
+            assert mock.call_args[1]["timeout"] == 300.0
+
+    def test_warns_on_long_prompt(self, capsys):
+        # Generate a prompt that exceeds the token warning threshold.
+        long_prompt = "x" * (_TOKEN_WARNING_THRESHOLD * 4 + 100)
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete(long_prompt, base_url="http://test/v1",
+                     model="m", api_key="k")
+        err = capsys.readouterr().err
+        assert "Warning" in err
+        assert "tokens" in err
+
+    def test_no_warning_on_short_prompt(self, capsys):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete("short prompt", base_url="http://test/v1",
+                     model="m", api_key="k")
+        err = capsys.readouterr().err
+        assert err == ""
+
+
+# -- _estimate_tokens() ----------------------------------------------------
+
+
+class TestEstimateTokens:
+
+    def test_empty(self):
+        assert _estimate_tokens("") == 0
+
+    def test_basic(self):
+        # 20 chars / 4 = 5 tokens
+        assert _estimate_tokens("a" * 20) == 5
 
 
 # -- summarize() end-to-end with mock LLM ----------------------------------
