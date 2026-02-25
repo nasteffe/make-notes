@@ -17,7 +17,7 @@ Therapeutic techniques and interventions used during the session.
 Progress toward treatment goals, new insights, and functional changes reported.
 
 ## Risk Assessment
-Note any mention of suicidal ideation, self-harm, substance use, or safety concerns. If none are present, state "No acute safety concerns identified during this session."
+Note any mention of suicidal ideation, self-harm, substance use, or safety concerns. Document protective factors discussed (social support, coping skills, reasons for living, treatment engagement). If no risk factors are present, state "No acute safety concerns identified during this session."
 
 ## Next Session
 Planned focus, between-session tasks, and follow-up interval.

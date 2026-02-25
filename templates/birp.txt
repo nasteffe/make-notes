@@ -14,7 +14,7 @@ Specific therapeutic interventions and techniques used by the therapist during t
 How the client responded to the interventions. Include shifts in affect, new insights, resistance, engagement with exercises, and any in-session changes.
 
 ## Plan
-Next steps including continued or modified interventions, between-session assignments, coordination of care, referrals, and focus for the next session. Include follow-up interval.
+Next steps including continued or modified interventions, between-session assignments, coordination of care, referrals, and focus for the next session. Note any safety concerns (suicidal ideation, self-harm, substance use) and protective factors (social support, coping skills, treatment engagement) if discussed. If none, note "No acute safety concerns identified during this session." Include follow-up interval.
 
 ---
 

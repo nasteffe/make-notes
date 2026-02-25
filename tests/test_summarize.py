@@ -394,6 +394,7 @@ class TestTemplateFiles:
     @pytest.fixture(params=[
         "soap.txt", "dap.txt", "birp.txt", "progress.txt",
         "cbt-soap.txt", "psychodynamic.txt", "intake.txt",
+        "neuropsychoanalytic.txt", "informed-consent.txt",
     ])
     def template_path(self, request):
         p = Path(__file__).parent.parent / "templates" / request.param

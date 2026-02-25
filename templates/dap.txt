@@ -8,7 +8,7 @@ Write in professional clinical language. Use third person for the client. Be con
 Objective and subjective information gathered during the session. Include what the client reported, observable behaviors, affect, and significant statements or themes discussed. Note any screening tools administered and their results.
 
 ## Assessment
-Clinical interpretation of the data. Include progress toward treatment goals, therapeutic alliance observations, diagnostic impressions, and risk assessment. Note patterns, insights, or shifts in functioning.
+Clinical interpretation of the data. Include progress toward treatment goals, therapeutic alliance observations, diagnostic impressions, and risk assessment (suicidal ideation, self-harm, substance use if discussed; protective factors such as social support, coping skills, treatment engagement). Note patterns, insights, or shifts in functioning. If no risk factors are present, note "No acute safety concerns identified during this session."
 
 ## Plan
 Therapeutic interventions to continue or introduce, between-session tasks, referrals, and focus for the next session. Include follow-up interval.

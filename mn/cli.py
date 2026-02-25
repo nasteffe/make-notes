@@ -24,6 +24,7 @@ import httpx
 
 from . import edit as _edit
 from . import fmt as _fmt
+from . import log as _log
 from . import record as _record
 from . import redact as _redact
 from . import summarize as _summarize
@@ -37,7 +38,7 @@ from .summarize import RemoteEndpointError
 
 def _die(msg):
     """Print an error message to stderr and exit with code 1."""
-    print(f"Error: {msg}", file=sys.stderr)
+    _log.error(f"Error: {msg}")
     sys.exit(1)
 
 
@@ -53,12 +54,28 @@ def _check_audio_file(path):
 
 
 def _check_hf_token(args):
-    """Warn if HF_TOKEN is not set (needed for pyannote diarization)."""
-    token = getattr(args, "hf_token", None) or os.environ.get("HF_TOKEN")
+    """Resolve HF token from env (preferred) or deprecated --hf-token flag.
+
+    If --hf-token was used, emit a deprecation warning and move the value
+    into the environment so it never stays visible in /proc/*/cmdline.
+    """
+    cli_token = getattr(args, "hf_token", None)
+    if cli_token:
+        _log.warn(
+            "Warning: --hf-token is deprecated and exposes the token in "
+            "process listings. Set the HF_TOKEN environment variable "
+            "instead."
+        )
+        # Move to env so downstream code reads it from there, and clear
+        # the attribute to avoid keeping it in the Namespace.
+        os.environ.setdefault("HF_TOKEN", cli_token)
+        args.hf_token = None
+
+    token = os.environ.get("HF_TOKEN")
     if not token:
         _die(
             "HuggingFace token required for speaker diarization.\n"
-            "Set HF_TOKEN environment variable or pass --hf-token.\n"
+            "Set the HF_TOKEN environment variable.\n"
             "Get a token at: https://huggingface.co/settings/tokens"
         )
 
@@ -78,11 +95,26 @@ def _check_template(path):
 
 
 def _progress(msg):
-    """Print a progress message to stderr."""
-    print(msg, file=sys.stderr)
+    """Print a progress message to stderr (verbosity >= 2)."""
+    _log.progress(msg)
 
 
 # -- Shared argument helpers ------------------------------------------------
+
+
+def _add_verbose_flag(p):
+    """Add --verbose / -v flag (repeatable) to control stderr output."""
+    p.add_argument("-v", "--verbose", action="count", default=None,
+                   help="increase output verbosity (repeat for more: -v warnings, -vv progress)")
+
+
+def _init_logging(args):
+    """Configure logging from the parsed --verbose flag."""
+    level = getattr(args, "verbose", None)
+    if level is None:
+        _log.configure()  # use MN_VERBOSE env
+    else:
+        _log.configure(verbose=min(level, 2))
 
 
 def _add_whisper_args(p):
@@ -102,7 +134,7 @@ def _add_diarization_args(p):
     p.add_argument("--max-speakers", type=int, default=None,
                    help="maximum number of speakers")
     p.add_argument("--hf-token", default=None,
-                   help="HuggingFace token (or set HF_TOKEN env var)")
+                   help=argparse.SUPPRESS)  # deprecated: use HF_TOKEN env var
     p.add_argument("--speakers", default=None,
                    help="comma-separated speaker names (e.g. Therapist,Client)")
 
@@ -215,7 +247,9 @@ def record():
                    help="number of channels (default: 1)")
     p.add_argument("--duration", type=float, default=None,
                    help="max duration in seconds (default: until Ctrl-C)")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
 
     path = _record.record(
         output_path=args.output,
@@ -240,7 +274,9 @@ def transcribe():
     p.add_argument("audio", help="path to audio file")
     _add_whisper_args(p)
     _add_diarization_args(p)
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
     apply_config(args, load_config())
 
     _check_audio_file(args.audio)
@@ -261,7 +297,9 @@ def fmt():
     )
     p.add_argument("--timestamps", action="store_true",
                    help="include timestamps")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
 
     segments = _read_stdin_segments()
     if segments is None:
@@ -280,7 +318,9 @@ def redact():
     )
     p.add_argument("--names", default=None,
                    help="comma-separated names to redact")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
 
     segments = _read_stdin_segments()
     if segments is None:
@@ -300,7 +340,9 @@ def edit():
         prog="mn-edit",
         description="Edit transcript in $EDITOR, output corrected JSON lines.",
     )
-    p.parse_args()
+    _add_verbose_flag(p)
+    args = p.parse_args()
+    _init_logging(args)
 
     segments = _read_stdin_segments()
     if segments is None:
@@ -326,7 +368,9 @@ def summarize():
                    help="redact PII before sending to LLM")
     p.add_argument("--redact-names", default=None,
                    help="comma-separated names to redact")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
     apply_config(args, load_config())
 
     _check_template(args.template)
@@ -350,7 +394,9 @@ def templates():
     )
     p.add_argument("--dir", default=None,
                    help="template directory (default: built-in templates/)")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
 
     if args.dir:
         template_dir = Path(args.dir)
@@ -397,7 +443,9 @@ def batch():
                    help="comma-separated names to redact")
     p.add_argument("--transcript-only", action="store_true",
                    help="output transcripts only, skip summarization")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
     apply_config(args, load_config())
 
     _check_template(args.template)
@@ -474,7 +522,9 @@ def main():
                    help="comma-separated names to redact")
     p.add_argument("--transcript-only", action="store_true",
                    help="print formatted transcript, skip summarization")
+    _add_verbose_flag(p)
     args = p.parse_args()
+    _init_logging(args)
     apply_config(args, load_config())
 
     _check_audio_file(args.audio)

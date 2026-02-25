@@ -72,8 +72,8 @@ def load_config(path=None):
         with open(path, "rb") as f:
             return tomllib.load(f)
     except Exception as e:
-        import sys
-        print(f"Warning: could not parse {path}: {e}", file=sys.stderr)
+        from . import log as _log
+        _log.warn(f"Warning: could not parse {path}: {e}")
         return {}
 
 
@@ -116,6 +116,26 @@ def apply_config(args, config):
             args.redact_names = redact_cfg["names"]
 
 
+# Expected types for config keys.  Used to reject obviously wrong values
+# like `num_speakers = "two"` before they cause cryptic downstream errors.
+_EXPECTED_TYPES = {
+    "model": str,
+    "device": str,
+    "compute_type": str,
+    "num_speakers": int,
+    "min_speakers": int,
+    "max_speakers": int,
+    "speakers": str,
+    "hf_token": str,
+    "template": str,
+    "base_url": str,
+    "api_key": str,
+    "client_name": str,
+    "session_date": str,
+    "names": str,
+}
+
+
 def _apply_section(args, section, mapping):
     """Apply a config section to args. Only fills in None/unset values."""
     for config_key, attr_name in mapping.items():
@@ -125,4 +145,14 @@ def _apply_section(args, section, mapping):
         if current is not None:
             continue
         if config_key in section:
-            setattr(args, attr_name, section[config_key])
+            value = section[config_key]
+            expected = _EXPECTED_TYPES.get(config_key)
+            if expected is not None and not isinstance(value, expected):
+                from . import log as _log
+                _log.warn(
+                    f"Warning: config key '{config_key}' should be "
+                    f"{expected.__name__}, got {type(value).__name__}; "
+                    f"ignoring."
+                )
+                continue
+            setattr(args, attr_name, value)

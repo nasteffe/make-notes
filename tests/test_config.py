@@ -159,3 +159,20 @@ class TestApplyConfig:
         config = {"transcribe": {"speakers": "Therapist,Client"}}
         apply_config(args, config)
         assert args.speakers == "Therapist,Client"
+
+    def test_wrong_type_ignored_with_warning(self, capsys):
+        from mn import log as _log
+        _log.configure(verbose=1)
+
+        args = self._make_args()
+        config = {"transcribe": {"num_speakers": "two"}}
+        apply_config(args, config)
+        assert args.num_speakers is None  # not set
+        err = capsys.readouterr().err
+        assert "should be int" in err
+
+    def test_correct_type_accepted(self):
+        args = self._make_args()
+        config = {"transcribe": {"num_speakers": 3}}
+        apply_config(args, config)
+        assert args.num_speakers == 3

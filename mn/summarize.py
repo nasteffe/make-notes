@@ -20,7 +20,6 @@ Configure via environment or CLI flags:
 
 import json
 import os
-import sys
 from datetime import date
 from pathlib import Path
 from string import Template
@@ -28,6 +27,8 @@ from string import Template
 from urllib.parse import urlparse
 
 import httpx
+
+from . import log as _log
 
 # Rough chars-per-token ratio for English text. Used for warnings only.
 _CHARS_PER_TOKEN = 4
@@ -105,19 +106,17 @@ def complete(prompt, base_url=None, model=None, api_key=None,
                 f"({base_url}). Pass --allow-remote to confirm, or use "
                 f"a local LLM (e.g. ollama)."
             )
-        print(
+        _log.warn(
             f"Warning: sending transcript to remote endpoint ({base_url}). "
-            f"Ensure you have appropriate data handling agreements in place.",
-            file=sys.stderr,
+            f"Ensure you have appropriate data handling agreements in place."
         )
 
     est = _estimate_tokens(prompt)
     if est > _TOKEN_WARNING_THRESHOLD:
-        print(
+        _log.warn(
             f"Warning: prompt is ~{est} tokens. Models with small context "
             f"windows may truncate or fail. Consider using a larger model "
-            f"or splitting the session.",
-            file=sys.stderr,
+            f"or splitting the session."
         )
 
     resp = httpx.post(

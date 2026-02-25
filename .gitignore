@@ -3,3 +3,27 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets / env
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.pytest_cache/
+htmlcov/
+.coverage

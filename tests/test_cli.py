@@ -1,6 +1,7 @@
 """Tests for mn.cli — argument parsing and pipeline wiring."""
 
 import json
+import os
 import sys
 from io import StringIO
 from pathlib import Path
@@ -241,8 +242,8 @@ class TestTranscribeCli:
             "--num-speakers", "3",
             "--min-speakers", "2",
             "--max-speakers", "4",
-            "--hf-token", "hf_test",
         ])
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
 
         with patch("mn.transcribe.transcribe_and_diarize",
                     return_value=[]) as mock:
@@ -255,7 +256,7 @@ class TestTranscribeCli:
                 num_speakers=3,
                 min_speakers=2,
                 max_speakers=4,
-                hf_token="hf_test",
+                hf_token=None,
                 _whisper=None,
                 _diarizer=None,
             )
@@ -277,6 +278,8 @@ class TestTemplatesCli:
         assert "cbt-soap" in out
         assert "psychodynamic" in out
         assert "intake" in out
+        assert "neuropsychoanalytic" in out
+        assert "informed-consent" in out
 
     def test_custom_dir(self, capsys, monkeypatch, tmp_path):
         (tmp_path / "custom.txt").write_text("Custom template for $transcript")
@@ -396,7 +399,6 @@ class TestMainCli:
             "--model", "large-v3",
             "--device", "cuda",
             "--num-speakers", "2",
-            "--hf-token", "hf_abc",
         ])
 
         with patch("mn.transcribe.transcribe_and_diarize",
@@ -410,7 +412,7 @@ class TestMainCli:
                 num_speakers=2,
                 min_speakers=None,
                 max_speakers=None,
-                hf_token="hf_abc",
+                hf_token=None,
                 _whisper=None,
                 _diarizer=None,
             )
@@ -562,11 +564,20 @@ class TestCheckHfToken:
         args = argparse.Namespace(hf_token=None)
         _check_hf_token(args)  # should not raise
 
-    def test_passes_with_flag(self, monkeypatch):
+    def test_deprecated_flag_warns_and_moves_to_env(self, monkeypatch, capsys):
+        from mn import log as _log
+        _log.configure(verbose=1)
         monkeypatch.delenv("HF_TOKEN", raising=False)
         import argparse
-        args = argparse.Namespace(hf_token="hf_test")
-        _check_hf_token(args)  # should not raise
+        args = argparse.Namespace(hf_token="hf_from_flag")
+        _check_hf_token(args)
+        # Token should be moved to env, cleared from args.
+        assert args.hf_token is None
+        assert os.environ.get("HF_TOKEN") == "hf_from_flag"
+        err = capsys.readouterr().err
+        assert "deprecated" in err.lower()
+        # Clean up.
+        monkeypatch.delenv("HF_TOKEN", raising=False)
 
     def test_fails_without_token(self, monkeypatch):
         monkeypatch.delenv("HF_TOKEN", raising=False)
@@ -598,7 +609,7 @@ class TestProgressReporting:
 
     def test_transcribe_prints_progress(self, capsys, monkeypatch):
         monkeypatch.setattr("sys.argv", [
-            "mn-transcribe", "test.wav",
+            "mn-transcribe", "test.wav", "-vv",
         ])
         monkeypatch.setenv("HF_TOKEN", "hf_test")
 
@@ -620,6 +631,7 @@ class TestProgressReporting:
             "mn-summarize", "--template", str(template),
             "--base-url", "http://localhost:11434/v1",
             "--llm-model", "m", "--api-key", "k",
+            "-vv",
         ])
 
         with patch("mn.summarize.httpx.post",
@@ -628,6 +640,21 @@ class TestProgressReporting:
 
         err = capsys.readouterr().err
         assert "Summarizing" in err
+
+    def test_quiet_mode_suppresses_progress(self, capsys, monkeypatch):
+        monkeypatch.setattr("sys.argv", [
+            "mn-transcribe", "test.wav",
+        ])
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+        monkeypatch.setenv("MN_VERBOSE", "0")
+
+        with patch("mn.cli._check_audio_file"):
+            with patch("mn.transcribe.transcribe_and_diarize",
+                        return_value=_sample_segments()):
+                cli.transcribe()
+
+        err = capsys.readouterr().err
+        assert "Transcribing" not in err
 
 
 class TestConfigIntegration:
