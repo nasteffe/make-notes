@@ -44,7 +44,12 @@ _HEADER = re.compile(
 def _parse_time(ts):
     """MM:SS → float seconds."""
     parts = ts.split(":")
-    return int(parts[0]) * 60 + int(parts[1])
+    if len(parts) != 2:
+        raise ValueError(f"Invalid timestamp format (expected MM:SS): {ts!r}")
+    try:
+        return int(parts[0]) * 60 + int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid timestamp format (expected MM:SS): {ts!r}")
 
 
 def from_editable(text):
@@ -89,11 +94,13 @@ def edit(segments):
     editor = os.environ.get("EDITOR", "vi")
     text = to_editable(segments)
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", prefix="mn-edit-", delete=False
-    ) as f:
+    # Create a private temp directory so the transcript is never
+    # world-readable — important for clinical data.
+    tmp_dir = tempfile.mkdtemp(prefix="mn-edit-")
+    tmp = os.path.join(tmp_dir, "transcript.txt")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(text)
-        tmp = f.name
 
     try:
         subprocess.run([editor, tmp], check=True)
@@ -101,5 +108,6 @@ def edit(segments):
             edited = f.read()
     finally:
         os.unlink(tmp)
+        os.rmdir(tmp_dir)
 
     return from_editable(edited)

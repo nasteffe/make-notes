@@ -29,7 +29,7 @@ def _mock_llm_response(content="Generated note"):
     return httpx.Response(
         200,
         json={"choices": [{"message": {"content": content}}]},
-        request=httpx.Request("POST", "http://test/v1/chat/completions"),
+        request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"),
     )
 
 
@@ -111,7 +111,7 @@ class TestSummarizeCli:
         monkeypatch.setattr("sys.stdin", StringIO(_sample_jsonl()))
         monkeypatch.setattr("sys.argv", [
             "mn-summarize", "--template", str(template),
-            "--base-url", "http://test/v1",
+            "--base-url", "http://localhost:11434/v1",
             "--llm-model", "test-model",
             "--api-key", "test-key",
         ])
@@ -149,7 +149,7 @@ class TestSummarizeCli:
         monkeypatch.setattr("sys.argv", [
             "mn-summarize", "--template", str(template),
             "--redact",
-            "--base-url", "http://test/v1",
+            "--base-url", "http://localhost:11434/v1",
             "--llm-model", "m", "--api-key", "k",
         ])
 
@@ -169,7 +169,7 @@ class TestSummarizeCli:
             "mn-summarize", "--template", str(template),
             "--client-name", "J.D.",
             "--session-date", "2026-02-16",
-            "--base-url", "http://test/v1",
+            "--base-url", "http://localhost:11434/v1",
             "--llm-model", "m", "--api-key", "k",
         ])
 
@@ -333,7 +333,7 @@ class TestMainCli:
         monkeypatch.setattr("sys.argv", [
             "mn", "test.wav",
             "--template", str(template),
-            "--base-url", "http://test/v1",
+            "--base-url", "http://localhost:11434/v1",
             "--llm-model", "test-model",
             "--api-key", "test-key",
         ])
@@ -660,3 +660,68 @@ class TestConfigIntegration:
         # Config set speakers=Therapist,Client, so labels should be applied.
         assert lines[0]["speaker"] == "Therapist"
         assert lines[1]["speaker"] == "Client"
+
+
+# -- Remote endpoint gate in CLI -------------------------------------------
+
+
+class TestRemoteEndpointCli:
+
+    def test_summarize_blocks_remote_without_flag(self, capsys, monkeypatch, tmp_path):
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.stdin", StringIO(_sample_jsonl()))
+        monkeypatch.setattr("sys.argv", [
+            "mn-summarize", "--template", str(template),
+            "--base-url", "https://api.openai.com/v1",
+            "--llm-model", "m", "--api-key", "k",
+        ])
+
+        with pytest.raises(SystemExit):
+            cli.summarize()
+        err = capsys.readouterr().err
+        assert "Refusing" in err or "remote" in err.lower()
+
+    def test_summarize_allows_remote_with_flag(self, capsys, monkeypatch, tmp_path):
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.stdin", StringIO(_sample_jsonl()))
+        monkeypatch.setattr("sys.argv", [
+            "mn-summarize", "--template", str(template),
+            "--base-url", "https://api.openai.com/v1",
+            "--llm-model", "m", "--api-key", "k",
+            "--allow-remote",
+        ])
+
+        with patch("mn.summarize.httpx.post",
+                    return_value=_mock_llm_response()):
+            cli.summarize()
+
+        out = capsys.readouterr().out
+        assert "Generated note" in out
+
+
+# -- Malformed config file -------------------------------------------------
+
+
+class TestMalformedConfig:
+
+    def test_malformed_toml_warns_and_continues(self, capsys, monkeypatch, tmp_path):
+        cfg = tmp_path / "mn.toml"
+        cfg.write_text("this is not valid [[ toml")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-transcribe", str(tmp_path / "test.wav"),
+        ])
+
+        with patch("mn.cli._check_audio_file"):
+            with patch("mn.transcribe.transcribe_and_diarize",
+                        return_value=_sample_segments()):
+                cli.transcribe()
+
+        err = capsys.readouterr().err
+        assert "could not parse" in err.lower()

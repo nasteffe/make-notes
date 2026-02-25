@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from mn.summarize import (
+    RemoteEndpointError,
     _TOKEN_WARNING_THRESHOLD,
     _duration,
     _estimate_tokens,
@@ -167,36 +168,37 @@ class TestComplete:
 
     def test_returns_message_content(self):
         with patch("mn.summarize.httpx.post", return_value=_mock_response("OK")):
-            result = complete("prompt", base_url="http://test/v1",
+            result = complete("prompt", base_url="http://localhost:11434/v1",
                               model="m", api_key="k")
         assert result == "OK"
 
     def test_uses_env_defaults(self, monkeypatch):
-        monkeypatch.setenv("MN_API_BASE", "http://env-base/v1")
+        monkeypatch.setenv("MN_API_BASE", "http://localhost:9999/v1")
         monkeypatch.setenv("MN_MODEL", "env-model")
         monkeypatch.setenv("MN_API_KEY", "env-key")
 
         with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
             complete("test prompt")
             call_kwargs = mock.call_args
-            assert "env-base" in call_kwargs[0][0]
+            assert "localhost:9999" in call_kwargs[0][0]
             body = call_kwargs[1]["json"]
             assert body["model"] == "env-model"
             assert "env-key" in call_kwargs[1]["headers"]["Authorization"]
 
     def test_explicit_args_override_env(self, monkeypatch):
-        monkeypatch.setenv("MN_API_BASE", "http://env/v1")
+        monkeypatch.setenv("MN_API_BASE", "http://localhost:1111/v1")
         monkeypatch.setenv("MN_MODEL", "env-model")
 
         with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
-            complete("prompt", base_url="http://explicit/v1", model="explicit-model")
+            complete("prompt", base_url="http://localhost:2222/v1",
+                     model="explicit-model")
             call_kwargs = mock.call_args
-            assert "explicit" in call_kwargs[0][0]
+            assert "localhost:2222" in call_kwargs[0][0]
             assert call_kwargs[1]["json"]["model"] == "explicit-model"
 
     def test_strips_trailing_slash_from_base_url(self):
         with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
-            complete("prompt", base_url="http://test/v1/", model="m", api_key="k")
+            complete("prompt", base_url="http://localhost:11434/v1/", model="m", api_key="k")
             url = mock.call_args[0][0]
             assert "/v1/chat/completions" in url
             assert "//chat" not in url
@@ -205,29 +207,29 @@ class TestComplete:
         error_resp = httpx.Response(
             500,
             json={"error": "server error"},
-            request=httpx.Request("POST", "http://test/v1/chat/completions"),
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"),
         )
         with patch("mn.summarize.httpx.post", return_value=error_resp):
             with pytest.raises(httpx.HTTPStatusError):
-                complete("prompt", base_url="http://test/v1",
+                complete("prompt", base_url="http://localhost:11434/v1",
                          model="m", api_key="k")
 
     def test_temperature_is_0_3(self):
         with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
-            complete("prompt", base_url="http://test/v1", model="m", api_key="k")
+            complete("prompt", base_url="http://localhost:11434/v1", model="m", api_key="k")
             body = mock.call_args[1]["json"]
             assert body["temperature"] == 0.3
 
     def test_timeout_is_300(self):
         with patch("mn.summarize.httpx.post", return_value=_mock_response()) as mock:
-            complete("prompt", base_url="http://test/v1", model="m", api_key="k")
+            complete("prompt", base_url="http://localhost:11434/v1", model="m", api_key="k")
             assert mock.call_args[1]["timeout"] == 300.0
 
     def test_warns_on_long_prompt(self, capsys):
         # Generate a prompt that exceeds the token warning threshold.
         long_prompt = "x" * (_TOKEN_WARNING_THRESHOLD * 4 + 100)
         with patch("mn.summarize.httpx.post", return_value=_mock_response()):
-            complete(long_prompt, base_url="http://test/v1",
+            complete(long_prompt, base_url="http://localhost:11434/v1",
                      model="m", api_key="k")
         err = capsys.readouterr().err
         assert "Warning" in err
@@ -284,12 +286,17 @@ class TestIsLocal:
 # -- Cloud PII warning ----------------------------------------------------
 
 
-class TestCloudPiiWarning:
+class TestRemoteEndpointGate:
 
-    def test_warns_on_remote_endpoint(self, capsys):
-        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+    def test_blocks_remote_without_allow_remote(self):
+        with pytest.raises(RemoteEndpointError, match="Refusing"):
             complete("prompt", base_url="https://api.openai.com/v1",
                      model="m", api_key="k")
+
+    def test_warns_on_remote_with_allow_remote(self, capsys):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete("prompt", base_url="https://api.openai.com/v1",
+                     model="m", api_key="k", allow_remote=True)
         err = capsys.readouterr().err
         assert "remote endpoint" in err
         assert "data handling" in err
@@ -312,6 +319,45 @@ class TestCloudPiiWarning:
 # -- summarize() end-to-end with mock LLM ----------------------------------
 
 
+class TestResponseValidation:
+
+    def test_empty_choices_raises(self):
+        bad_resp = httpx.Response(
+            200,
+            json={"choices": []},
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"),
+        )
+        with patch("mn.summarize.httpx.post", return_value=bad_resp):
+            with pytest.raises(RuntimeError, match="Unexpected LLM response"):
+                complete("prompt", base_url="http://localhost:11434/v1",
+                         model="m", api_key="k")
+
+    def test_missing_message_key_raises(self):
+        bad_resp = httpx.Response(
+            200,
+            json={"choices": [{"not_message": "x"}]},
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"),
+        )
+        with patch("mn.summarize.httpx.post", return_value=bad_resp):
+            with pytest.raises(RuntimeError, match="Unexpected LLM response"):
+                complete("prompt", base_url="http://localhost:11434/v1",
+                         model="m", api_key="k")
+
+    def test_no_choices_key_raises(self):
+        bad_resp = httpx.Response(
+            200,
+            json={"error": "something"},
+            request=httpx.Request("POST", "http://localhost:11434/v1/chat/completions"),
+        )
+        with patch("mn.summarize.httpx.post", return_value=bad_resp):
+            with pytest.raises(RuntimeError, match="Unexpected LLM response"):
+                complete("prompt", base_url="http://localhost:11434/v1",
+                         model="m", api_key="k")
+
+
+# -- summarize() end-to-end with mock LLM ----------------------------------
+
+
 class TestSummarize:
 
     def test_end_to_end(self, tmp_path):
@@ -321,7 +367,7 @@ class TestSummarize:
         with patch("mn.summarize.httpx.post",
                     return_value=_mock_response("SOAP note here")):
             result = summarize(_segments(), str(template),
-                               base_url="http://test/v1",
+                               base_url="http://localhost:11434/v1",
                                model="m", api_key="k")
         assert result == "SOAP note here"
 
@@ -332,7 +378,7 @@ class TestSummarize:
         with patch("mn.summarize.httpx.post",
                     return_value=_mock_response("result")) as mock:
             summarize(_segments(), str(template),
-                      base_url="http://test/v1", model="m", api_key="k")
+                      base_url="http://localhost:11434/v1", model="m", api_key="k")
             prompt = mock.call_args[1]["json"]["messages"][0]["content"]
             assert "SPEAKER_00" in prompt
             assert "SPEAKER_01" in prompt
@@ -361,6 +407,18 @@ class TestTemplateFiles:
     def test_template_contains_speakers_placeholder(self, template_path):
         text = template_path.read_text()
         assert "$speakers" in text
+
+    def test_template_contains_client_name_placeholder(self, template_path):
+        text = template_path.read_text()
+        assert "$client_name" in text
+
+    def test_template_contains_date_placeholder(self, template_path):
+        text = template_path.read_text()
+        assert "$date" in text
+
+    def test_template_contains_draft_disclaimer(self, template_path):
+        text = template_path.read_text()
+        assert "draft" in text.lower() or "clinician review" in text.lower()
 
     def test_template_renders_without_error(self, template_path):
         text = template_path.read_text()

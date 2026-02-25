@@ -18,6 +18,7 @@ Configure via environment or CLI flags:
     MN_API_KEY   (default: ollama)
 """
 
+import json
 import os
 import sys
 from datetime import date
@@ -81,18 +82,32 @@ def _is_local(url):
         return False
 
 
-def complete(prompt, base_url=None, model=None, api_key=None):
-    """Send a prompt to an OpenAI-compatible chat completions endpoint."""
+class RemoteEndpointError(RuntimeError):
+    """Raised when a remote LLM endpoint is used without --allow-remote."""
+
+
+def complete(prompt, base_url=None, model=None, api_key=None,
+             allow_remote=False):
+    """Send a prompt to an OpenAI-compatible chat completions endpoint.
+
+    Raises RemoteEndpointError if the endpoint is non-local and
+    allow_remote is False.
+    """
     base_url = base_url or os.environ.get("MN_API_BASE",
                                            "http://localhost:11434/v1")
     model = model or os.environ.get("MN_MODEL", "llama3")
     api_key = api_key or os.environ.get("MN_API_KEY", "ollama")
 
     if not _is_local(base_url):
+        if not allow_remote:
+            raise RemoteEndpointError(
+                f"Refusing to send clinical data to remote endpoint "
+                f"({base_url}). Pass --allow-remote to confirm, or use "
+                f"a local LLM (e.g. ollama)."
+            )
         print(
             f"Warning: sending transcript to remote endpoint ({base_url}). "
-            f"Ensure you have appropriate data handling agreements in place "
-            f"before sending clinical data to cloud APIs.",
+            f"Ensure you have appropriate data handling agreements in place.",
             file=sys.stderr,
         )
 
@@ -116,7 +131,13 @@ def complete(prompt, base_url=None, model=None, api_key=None):
         timeout=300.0,
     )
     resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    body = resp.json()
+    try:
+        return body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(
+            f"Unexpected LLM response format: {json.dumps(body)[:200]}"
+        )
 
 
 def summarize(segments, template_path, client_name=None, session_date=None,

@@ -1,5 +1,7 @@
 """Tests for mn.edit — round-trip editable transcript format."""
 
+import pytest
+
 from mn.edit import _parse_time, from_editable, to_editable
 from mn.transcribe import Segment
 
@@ -173,3 +175,19 @@ class TestParseTime:
 
     def test_large_minutes(self):
         assert _parse_time("61:01") == 3661
+
+    def test_invalid_single_part(self):
+        with pytest.raises(ValueError, match="Invalid timestamp"):
+            _parse_time("123")
+
+    def test_invalid_three_parts(self):
+        with pytest.raises(ValueError, match="Invalid timestamp"):
+            _parse_time("1:2:3")
+
+    def test_invalid_non_numeric(self):
+        with pytest.raises(ValueError, match="Invalid timestamp"):
+            _parse_time("a:b")
+
+    def test_invalid_empty(self):
+        with pytest.raises(ValueError, match="Invalid timestamp"):
+            _parse_time("")

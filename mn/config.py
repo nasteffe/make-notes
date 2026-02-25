@@ -68,8 +68,13 @@ def load_config(path=None):
     if not path.is_file():
         return {}
 
-    with open(path, "rb") as f:
-        return tomllib.load(f)
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception as e:
+        import sys
+        print(f"Warning: could not parse {path}: {e}", file=sys.stderr)
+        return {}
 
 
 def apply_config(args, config):

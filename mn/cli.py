@@ -29,6 +29,7 @@ from . import redact as _redact
 from . import summarize as _summarize
 from . import transcribe as _transcribe
 from .config import apply_config, load_config
+from .summarize import RemoteEndpointError
 
 
 # -- Error handling ---------------------------------------------------------
@@ -113,6 +114,8 @@ def _add_llm_args(p):
                    help="LLM model name (or set MN_MODEL)")
     p.add_argument("--api-key", default=None,
                    help="API key (or set MN_API_KEY)")
+    p.add_argument("--allow-remote", action="store_true",
+                   help="allow sending transcript to a non-local LLM endpoint")
     p.add_argument("--client-name", default=None,
                    help="client name for template $client_name placeholder")
     p.add_argument("--session-date", default=None,
@@ -139,7 +142,7 @@ def _transcribe_audio(args, _whisper=None, _diarizer=None, quiet=False):
             _whisper=_whisper,
             _diarizer=_diarizer,
         )
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         _die(f"Transcription failed: {e}")
 
     if args.speakers:
@@ -158,6 +161,41 @@ def _read_stdin_segments():
     if not text.strip():
         return None
     return _transcribe.from_jsonl(text)
+
+
+def _apply_redaction(segments, args):
+    """Apply PII redaction if --redact was passed. Returns (possibly new) list."""
+    if not args.redact:
+        return segments
+    names = ([n.strip() for n in args.redact_names.split(",")]
+             if args.redact_names else None)
+    return _redact.redact(segments, extra_names=names)
+
+
+def _call_summarize(segments, args):
+    """Call the LLM summarize pipeline, handling common errors."""
+    _progress("Summarizing...")
+    try:
+        return _summarize.summarize(
+            segments,
+            args.template,
+            client_name=args.client_name,
+            session_date=args.session_date,
+            base_url=args.base_url,
+            model=args.llm_model,
+            api_key=args.api_key,
+            allow_remote=args.allow_remote,
+        )
+    except RemoteEndpointError as e:
+        _die(str(e))
+    except httpx.ConnectError:
+        _die(
+            "Could not connect to LLM endpoint. Is ollama running?\n"
+            "Start it with: ollama serve\n"
+            "Or set MN_API_BASE to a different endpoint."
+        )
+    except httpx.HTTPStatusError as e:
+        _die(f"LLM request failed: {e.response.status_code} {e.response.text}")
 
 
 # -- mn-record --------------------------------------------------------------
@@ -185,6 +223,8 @@ def record():
         channels=args.channels,
         duration=args.duration,
     )
+    if path is None:
+        _die("No audio captured.")
     print(path)
 
 
@@ -295,31 +335,8 @@ def summarize():
     if segments is None:
         return
 
-    if args.redact:
-        names = ([n.strip() for n in args.redact_names.split(",")]
-                 if args.redact_names else None)
-        segments = _redact.redact(segments, extra_names=names)
-
-    _progress("Summarizing...")
-    try:
-        result = _summarize.summarize(
-            segments,
-            args.template,
-            client_name=args.client_name,
-            session_date=args.session_date,
-            base_url=args.base_url,
-            model=args.llm_model,
-            api_key=args.api_key,
-        )
-    except httpx.ConnectError:
-        _die(
-            "Could not connect to LLM endpoint. Is ollama running?\n"
-            "Start it with: ollama serve\n"
-            "Or set MN_API_BASE to a different endpoint."
-        )
-    except httpx.HTTPStatusError as e:
-        _die(f"LLM request failed: {e.response.status_code} {e.response.text}")
-    print(result)
+    segments = _apply_redaction(segments, args)
+    print(_call_summarize(segments, args))
 
 
 # -- mn-templates -----------------------------------------------------------
@@ -402,7 +419,7 @@ def batch():
             args.model, args.device, args.compute_type,
         )
         diarizer = _transcribe.load_diarizer(args.hf_token)
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         _die(f"Failed to load models: {e}")
 
     failed = []
@@ -419,27 +436,13 @@ def batch():
             failed.append(audio_path.name)
             continue
 
-        if args.redact:
-            names = ([n.strip() for n in args.redact_names.split(",")]
-                     if args.redact_names else None)
-            segments = _redact.redact(segments, extra_names=names)
+        segments = _apply_redaction(segments, args)
 
         if args.transcript_only:
             out_file = output_dir / f"{audio_path.stem}.txt"
             out_file.write_text(_fmt.fmt(segments, timestamps=True) + "\n")
         else:
-            try:
-                result = _summarize.summarize(
-                    segments,
-                    args.template,
-                    client_name=args.client_name,
-                    session_date=args.session_date,
-                    base_url=args.base_url,
-                    model=args.llm_model,
-                    api_key=args.api_key,
-                )
-            except (httpx.ConnectError, httpx.HTTPStatusError) as e:
-                _die(f"LLM request failed for {audio_path.name}: {e}")
+            result = _call_summarize(segments, args)
             out_file = output_dir / f"{audio_path.stem}.note.txt"
             out_file.write_text(result + "\n")
 
@@ -479,33 +482,10 @@ def main():
     _check_hf_token(args)
 
     segments = _transcribe_audio(args)
-
-    if args.redact:
-        names = ([n.strip() for n in args.redact_names.split(",")]
-                 if args.redact_names else None)
-        segments = _redact.redact(segments, extra_names=names)
+    segments = _apply_redaction(segments, args)
 
     if args.transcript_only:
         print(_fmt.fmt(segments, timestamps=True))
         return
 
-    _progress("Summarizing...")
-    try:
-        result = _summarize.summarize(
-            segments,
-            args.template,
-            client_name=args.client_name,
-            session_date=args.session_date,
-            base_url=args.base_url,
-            model=args.llm_model,
-            api_key=args.api_key,
-        )
-    except httpx.ConnectError:
-        _die(
-            "Could not connect to LLM endpoint. Is ollama running?\n"
-            "Start it with: ollama serve\n"
-            "Or set MN_API_BASE to a different endpoint."
-        )
-    except httpx.HTTPStatusError as e:
-        _die(f"LLM request failed: {e.response.status_code} {e.response.text}")
-    print(result)
+    print(_call_summarize(segments, args))

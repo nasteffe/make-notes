@@ -56,7 +56,7 @@ def record(output_path=None, sample_rate=16000, channels=1, duration=None):
 
     if not frames:
         print("No audio captured.", file=sys.stderr)
-        return output_path
+        return None
 
     import numpy as np
     audio = np.concatenate(frames, axis=0)

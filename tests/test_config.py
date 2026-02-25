@@ -74,6 +74,14 @@ class TestLoadConfig:
     def test_returns_empty_for_missing_path(self, tmp_path):
         assert load_config(tmp_path / "nonexistent.toml") == {}
 
+    def test_malformed_toml_returns_empty_with_warning(self, tmp_path, capsys):
+        cfg = tmp_path / "bad.toml"
+        cfg.write_text("this is not valid [[ toml syntax")
+        result = load_config(cfg)
+        assert result == {}
+        err = capsys.readouterr().err
+        assert "could not parse" in err.lower()
+
 
 # -- apply_config() --------------------------------------------------------
 
