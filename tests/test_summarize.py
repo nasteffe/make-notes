@@ -12,6 +12,7 @@ from mn.summarize import (
     _TOKEN_WARNING_THRESHOLD,
     _duration,
     _estimate_tokens,
+    _is_local,
     complete,
     load_template,
     render,
@@ -232,9 +233,9 @@ class TestComplete:
         assert "Warning" in err
         assert "tokens" in err
 
-    def test_no_warning_on_short_prompt(self, capsys):
+    def test_no_warning_on_short_local_prompt(self, capsys):
         with patch("mn.summarize.httpx.post", return_value=_mock_response()):
-            complete("short prompt", base_url="http://test/v1",
+            complete("short prompt", base_url="http://localhost:11434/v1",
                      model="m", api_key="k")
         err = capsys.readouterr().err
         assert err == ""
@@ -251,6 +252,61 @@ class TestEstimateTokens:
     def test_basic(self):
         # 20 chars / 4 = 5 tokens
         assert _estimate_tokens("a" * 20) == 5
+
+
+# -- _is_local() -----------------------------------------------------------
+
+
+class TestIsLocal:
+
+    def test_localhost(self):
+        assert _is_local("http://localhost:11434/v1") is True
+
+    def test_127_0_0_1(self):
+        assert _is_local("http://127.0.0.1:11434/v1") is True
+
+    def test_0_0_0_0(self):
+        assert _is_local("http://0.0.0.0:8000/v1") is True
+
+    def test_ipv6_loopback(self):
+        assert _is_local("http://[::1]:11434/v1") is True
+
+    def test_remote_url(self):
+        assert _is_local("https://api.openai.com/v1") is False
+
+    def test_custom_domain(self):
+        assert _is_local("https://my-server.example.com/v1") is False
+
+    def test_invalid_url(self):
+        assert _is_local("not a url") is False
+
+
+# -- Cloud PII warning ----------------------------------------------------
+
+
+class TestCloudPiiWarning:
+
+    def test_warns_on_remote_endpoint(self, capsys):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete("prompt", base_url="https://api.openai.com/v1",
+                     model="m", api_key="k")
+        err = capsys.readouterr().err
+        assert "remote endpoint" in err
+        assert "data handling" in err
+
+    def test_no_warning_on_localhost(self, capsys):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete("prompt", base_url="http://localhost:11434/v1",
+                     model="m", api_key="k")
+        err = capsys.readouterr().err
+        assert "remote endpoint" not in err
+
+    def test_no_warning_on_127_0_0_1(self, capsys):
+        with patch("mn.summarize.httpx.post", return_value=_mock_response()):
+            complete("prompt", base_url="http://127.0.0.1:11434/v1",
+                     model="m", api_key="k")
+        err = capsys.readouterr().err
+        assert "remote endpoint" not in err
 
 
 # -- summarize() end-to-end with mock LLM ----------------------------------

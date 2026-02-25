@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from mn import cli
+from mn.cli import _check_audio_file, _check_hf_token, _check_template, _die
 from mn.transcribe import Segment, to_jsonl
 
 
@@ -185,6 +186,13 @@ class TestSummarizeCli:
 
 class TestTranscribeCli:
 
+    @pytest.fixture(autouse=True)
+    def _skip_validation(self, monkeypatch):
+        """Skip file/token validation in transcribe CLI tests."""
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+        with patch("mn.cli._check_audio_file"):
+            yield
+
     def test_requires_audio_arg(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["mn-transcribe"])
         with pytest.raises(SystemExit):
@@ -287,6 +295,13 @@ class TestTemplatesCli:
 
 
 class TestMainCli:
+
+    @pytest.fixture(autouse=True)
+    def _skip_validation(self, monkeypatch):
+        """Skip file/token validation in main CLI tests."""
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+        with patch("mn.cli._check_audio_file"):
+            yield
 
     def test_requires_audio_and_template(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["mn"])
@@ -406,6 +421,13 @@ class TestMainCli:
 
 class TestBatchCli:
 
+    @pytest.fixture(autouse=True)
+    def _skip_validation(self, monkeypatch):
+        """Skip file/token validation in batch CLI tests."""
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+        with patch("mn.cli._check_audio_file"):
+            yield
+
     def test_processes_directory(self, capsys, monkeypatch, tmp_path):
         # Create a fake audio file.
         (tmp_path / "session1.wav").write_bytes(b"fake audio")
@@ -495,3 +517,146 @@ class TestBatchCli:
 
         with pytest.raises(SystemExit):
             cli.batch()
+
+
+# -- Error handling helpers -------------------------------------------------
+
+
+class TestDie:
+
+    def test_prints_to_stderr_and_exits(self, capsys):
+        with pytest.raises(SystemExit) as exc:
+            _die("something went wrong")
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Error: something went wrong" in err
+
+
+class TestCheckAudioFile:
+
+    def test_passes_for_valid_file(self, tmp_path):
+        f = tmp_path / "test.wav"
+        f.write_bytes(b"RIFF" + b"\x00" * 100)
+        _check_audio_file(str(f))  # should not raise
+
+    def test_fails_for_missing_file(self):
+        with pytest.raises(SystemExit):
+            _check_audio_file("/nonexistent/audio.wav")
+
+    def test_fails_for_directory(self, tmp_path):
+        with pytest.raises(SystemExit):
+            _check_audio_file(str(tmp_path))
+
+    def test_fails_for_empty_file(self, tmp_path):
+        f = tmp_path / "empty.wav"
+        f.write_bytes(b"")
+        with pytest.raises(SystemExit):
+            _check_audio_file(str(f))
+
+
+class TestCheckHfToken:
+
+    def test_passes_with_env_var(self, monkeypatch):
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+        import argparse
+        args = argparse.Namespace(hf_token=None)
+        _check_hf_token(args)  # should not raise
+
+    def test_passes_with_flag(self, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        import argparse
+        args = argparse.Namespace(hf_token="hf_test")
+        _check_hf_token(args)  # should not raise
+
+    def test_fails_without_token(self, monkeypatch):
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        import argparse
+        args = argparse.Namespace(hf_token=None)
+        with pytest.raises(SystemExit):
+            _check_hf_token(args)
+
+
+class TestCheckTemplate:
+
+    def test_passes_for_valid_file(self, tmp_path):
+        f = tmp_path / "t.txt"
+        f.write_text("$transcript")
+        _check_template(str(f))  # should not raise
+
+    def test_fails_for_missing_file(self):
+        with pytest.raises(SystemExit):
+            _check_template("/nonexistent/template.txt")
+
+    def test_passes_for_none(self):
+        _check_template(None)  # should not raise
+
+
+# -- Progress and config integration ----------------------------------------
+
+
+class TestProgressReporting:
+
+    def test_transcribe_prints_progress(self, capsys, monkeypatch):
+        monkeypatch.setattr("sys.argv", [
+            "mn-transcribe", "test.wav",
+        ])
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+
+        with patch("mn.cli._check_audio_file"):
+            with patch("mn.transcribe.transcribe_and_diarize",
+                        return_value=_sample_segments()):
+                cli.transcribe()
+
+        err = capsys.readouterr().err
+        assert "Transcribing" in err
+        assert "2 segments" in err
+
+    def test_summarize_prints_progress(self, capsys, monkeypatch, tmp_path):
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.stdin", StringIO(_sample_jsonl()))
+        monkeypatch.setattr("sys.argv", [
+            "mn-summarize", "--template", str(template),
+            "--base-url", "http://localhost:11434/v1",
+            "--llm-model", "m", "--api-key", "k",
+        ])
+
+        with patch("mn.summarize.httpx.post",
+                    return_value=_mock_llm_response()):
+            cli.summarize()
+
+        err = capsys.readouterr().err
+        assert "Summarizing" in err
+
+
+class TestConfigIntegration:
+
+    def test_config_fills_defaults(self, capsys, monkeypatch, tmp_path):
+        # Write a config file.
+        cfg = tmp_path / "mn.toml"
+        cfg.write_text(
+            "[transcribe]\n"
+            'speakers = "Therapist,Client"\n'
+        )
+        monkeypatch.chdir(tmp_path)
+
+        # Create a fake audio file.
+        audio = tmp_path / "test.wav"
+        audio.write_bytes(b"fake")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-transcribe", str(audio),
+        ])
+        monkeypatch.setenv("HF_TOKEN", "hf_test")
+
+        with patch("mn.cli._check_audio_file"):
+            with patch("mn.transcribe.transcribe_and_diarize",
+                        return_value=_sample_segments()):
+                cli.transcribe()
+
+        out = capsys.readouterr().out
+        lines = [json.loads(l) for l in out.strip().split("\n")]
+        # Config set speakers=Therapist,Client, so labels should be applied.
+        assert lines[0]["speaker"] == "Therapist"
+        assert lines[1]["speaker"] == "Client"

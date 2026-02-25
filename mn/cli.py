@@ -16,8 +16,11 @@ Stdin/stdout everywhere. JSON lines as the interchange format.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+import httpx
 
 from . import edit as _edit
 from . import fmt as _fmt
@@ -25,6 +28,57 @@ from . import record as _record
 from . import redact as _redact
 from . import summarize as _summarize
 from . import transcribe as _transcribe
+from .config import apply_config, load_config
+
+
+# -- Error handling ---------------------------------------------------------
+
+
+def _die(msg):
+    """Print an error message to stderr and exit with code 1."""
+    print(f"Error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _check_audio_file(path):
+    """Validate that an audio file exists and is readable."""
+    p = Path(path)
+    if not p.exists():
+        _die(f"Audio file not found: {path}")
+    if not p.is_file():
+        _die(f"Not a file: {path}")
+    if p.stat().st_size == 0:
+        _die(f"Audio file is empty: {path}")
+
+
+def _check_hf_token(args):
+    """Warn if HF_TOKEN is not set (needed for pyannote diarization)."""
+    token = getattr(args, "hf_token", None) or os.environ.get("HF_TOKEN")
+    if not token:
+        _die(
+            "HuggingFace token required for speaker diarization.\n"
+            "Set HF_TOKEN environment variable or pass --hf-token.\n"
+            "Get a token at: https://huggingface.co/settings/tokens"
+        )
+
+
+def _check_template(path):
+    """Validate that a template file exists."""
+    if path is None:
+        return
+    p = Path(path)
+    if not p.exists():
+        _die(f"Template file not found: {path}")
+    if not p.is_file():
+        _die(f"Not a file: {path}")
+
+
+# -- Progress reporting ----------------------------------------------------
+
+
+def _progress(msg):
+    """Print a progress message to stderr."""
+    print(msg, file=sys.stderr)
 
 
 # -- Shared argument helpers ------------------------------------------------
@@ -65,25 +119,36 @@ def _add_llm_args(p):
                    help="session date for template $date placeholder (YYYY-MM-DD)")
 
 
-def _transcribe_audio(args, _whisper=None, _diarizer=None):
+def _transcribe_audio(args, _whisper=None, _diarizer=None, quiet=False):
     """Shared transcription logic for transcribe and main commands.
 
     Pass _whisper/_diarizer to reuse pre-loaded models (batch mode).
     """
-    segments = _transcribe.transcribe_and_diarize(
-        args.audio,
-        model_size=args.model,
-        device=args.device,
-        compute_type=args.compute_type,
-        num_speakers=args.num_speakers,
-        min_speakers=args.min_speakers,
-        max_speakers=args.max_speakers,
-        hf_token=args.hf_token,
-        _whisper=_whisper,
-        _diarizer=_diarizer,
-    )
+    if not quiet:
+        _progress("Transcribing...")
+    try:
+        segments = _transcribe.transcribe_and_diarize(
+            args.audio,
+            model_size=args.model,
+            device=args.device,
+            compute_type=args.compute_type,
+            num_speakers=args.num_speakers,
+            min_speakers=args.min_speakers,
+            max_speakers=args.max_speakers,
+            hf_token=args.hf_token,
+            _whisper=_whisper,
+            _diarizer=_diarizer,
+        )
+    except Exception as e:
+        _die(f"Transcription failed: {e}")
+
     if args.speakers:
         segments = _transcribe.label_speakers(segments, args.speakers)
+
+    if not quiet:
+        n = len(segments)
+        speakers = len(set(s.speaker for s in segments))
+        _progress(f"  {n} segments, {speakers} speaker(s)")
     return segments
 
 
@@ -136,6 +201,10 @@ def transcribe():
     _add_whisper_args(p)
     _add_diarization_args(p)
     args = p.parse_args()
+    apply_config(args, load_config())
+
+    _check_audio_file(args.audio)
+    _check_hf_token(args)
 
     segments = _transcribe_audio(args)
     print(_transcribe.to_jsonl(segments))
@@ -218,6 +287,9 @@ def summarize():
     p.add_argument("--redact-names", default=None,
                    help="comma-separated names to redact")
     args = p.parse_args()
+    apply_config(args, load_config())
+
+    _check_template(args.template)
 
     segments = _read_stdin_segments()
     if segments is None:
@@ -228,15 +300,25 @@ def summarize():
                  if args.redact_names else None)
         segments = _redact.redact(segments, extra_names=names)
 
-    result = _summarize.summarize(
-        segments,
-        args.template,
-        client_name=args.client_name,
-        session_date=args.session_date,
-        base_url=args.base_url,
-        model=args.llm_model,
-        api_key=args.api_key,
-    )
+    _progress("Summarizing...")
+    try:
+        result = _summarize.summarize(
+            segments,
+            args.template,
+            client_name=args.client_name,
+            session_date=args.session_date,
+            base_url=args.base_url,
+            model=args.llm_model,
+            api_key=args.api_key,
+        )
+    except httpx.ConnectError:
+        _die(
+            "Could not connect to LLM endpoint. Is ollama running?\n"
+            "Start it with: ollama serve\n"
+            "Or set MN_API_BASE to a different endpoint."
+        )
+    except httpx.HTTPStatusError as e:
+        _die(f"LLM request failed: {e.response.status_code} {e.response.text}")
     print(result)
 
 
@@ -299,28 +381,43 @@ def batch():
     p.add_argument("--transcript-only", action="store_true",
                    help="output transcripts only, skip summarization")
     args = p.parse_args()
+    apply_config(args, load_config())
+
+    _check_template(args.template)
+    _check_hf_token(args)
 
     audio_dir = Path(args.directory)
     files = sorted(audio_dir.glob(f"*{args.ext}"))
 
     if not files:
-        print(f"No {args.ext} files in {audio_dir}", file=sys.stderr)
-        sys.exit(1)
+        _die(f"No {args.ext} files in {audio_dir}")
 
     output_dir = Path(args.output_dir) if args.output_dir else audio_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Pre-load models once for the whole batch.
-    print("Loading models...", file=sys.stderr)
-    whisper = _transcribe.load_whisper(
-        args.model, args.device, args.compute_type,
-    )
-    diarizer = _transcribe.load_diarizer(args.hf_token)
+    _progress("Loading models...")
+    try:
+        whisper = _transcribe.load_whisper(
+            args.model, args.device, args.compute_type,
+        )
+        diarizer = _transcribe.load_diarizer(args.hf_token)
+    except Exception as e:
+        _die(f"Failed to load models: {e}")
 
-    for audio_path in files:
-        print(f"Processing {audio_path.name}...", file=sys.stderr)
+    failed = []
+    for i, audio_path in enumerate(files, 1):
+        _progress(f"[{i}/{len(files)}] {audio_path.name}")
+        _check_audio_file(audio_path)
         args.audio = str(audio_path)
-        segments = _transcribe_audio(args, _whisper=whisper, _diarizer=diarizer)
+
+        try:
+            segments = _transcribe_audio(
+                args, _whisper=whisper, _diarizer=diarizer, quiet=True,
+            )
+        except SystemExit:
+            failed.append(audio_path.name)
+            continue
 
         if args.redact:
             names = ([n.strip() for n in args.redact_names.split(",")]
@@ -331,21 +428,26 @@ def batch():
             out_file = output_dir / f"{audio_path.stem}.txt"
             out_file.write_text(_fmt.fmt(segments, timestamps=True) + "\n")
         else:
-            result = _summarize.summarize(
-                segments,
-                args.template,
-                client_name=args.client_name,
-                session_date=args.session_date,
-                base_url=args.base_url,
-                model=args.llm_model,
-                api_key=args.api_key,
-            )
+            try:
+                result = _summarize.summarize(
+                    segments,
+                    args.template,
+                    client_name=args.client_name,
+                    session_date=args.session_date,
+                    base_url=args.base_url,
+                    model=args.llm_model,
+                    api_key=args.api_key,
+                )
+            except (httpx.ConnectError, httpx.HTTPStatusError) as e:
+                _die(f"LLM request failed for {audio_path.name}: {e}")
             out_file = output_dir / f"{audio_path.stem}.note.txt"
             out_file.write_text(result + "\n")
 
-        print(f"  → {out_file}", file=sys.stderr)
+        _progress(f"  → {out_file}")
 
-    print(f"Done. {len(files)} file(s) processed.", file=sys.stderr)
+    if failed:
+        _progress(f"Warning: {len(failed)} file(s) failed: {', '.join(failed)}")
+    _progress(f"Done. {len(files) - len(failed)}/{len(files)} file(s) processed.")
 
 
 # -- mn (main) --------------------------------------------------------------
@@ -370,6 +472,11 @@ def main():
     p.add_argument("--transcript-only", action="store_true",
                    help="print formatted transcript, skip summarization")
     args = p.parse_args()
+    apply_config(args, load_config())
+
+    _check_audio_file(args.audio)
+    _check_template(args.template)
+    _check_hf_token(args)
 
     segments = _transcribe_audio(args)
 
@@ -382,13 +489,23 @@ def main():
         print(_fmt.fmt(segments, timestamps=True))
         return
 
-    result = _summarize.summarize(
-        segments,
-        args.template,
-        client_name=args.client_name,
-        session_date=args.session_date,
-        base_url=args.base_url,
-        model=args.llm_model,
-        api_key=args.api_key,
-    )
+    _progress("Summarizing...")
+    try:
+        result = _summarize.summarize(
+            segments,
+            args.template,
+            client_name=args.client_name,
+            session_date=args.session_date,
+            base_url=args.base_url,
+            model=args.llm_model,
+            api_key=args.api_key,
+        )
+    except httpx.ConnectError:
+        _die(
+            "Could not connect to LLM endpoint. Is ollama running?\n"
+            "Start it with: ollama serve\n"
+            "Or set MN_API_BASE to a different endpoint."
+        )
+    except httpx.HTTPStatusError as e:
+        _die(f"LLM request failed: {e.response.status_code} {e.response.text}")
     print(result)

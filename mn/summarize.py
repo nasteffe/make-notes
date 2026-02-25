@@ -24,11 +24,15 @@ from datetime import date
 from pathlib import Path
 from string import Template
 
+from urllib.parse import urlparse
+
 import httpx
 
 # Rough chars-per-token ratio for English text. Used for warnings only.
 _CHARS_PER_TOKEN = 4
 _TOKEN_WARNING_THRESHOLD = 6000
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 
 from .fmt import fmt
 from .transcribe import Segment
@@ -68,12 +72,29 @@ def _estimate_tokens(text):
     return len(text) // _CHARS_PER_TOKEN
 
 
+def _is_local(url):
+    """Return True if the URL points to a local/loopback address."""
+    try:
+        host = urlparse(url).hostname or ""
+        return host in _LOCAL_HOSTS
+    except Exception:
+        return False
+
+
 def complete(prompt, base_url=None, model=None, api_key=None):
     """Send a prompt to an OpenAI-compatible chat completions endpoint."""
     base_url = base_url or os.environ.get("MN_API_BASE",
                                            "http://localhost:11434/v1")
     model = model or os.environ.get("MN_MODEL", "llama3")
     api_key = api_key or os.environ.get("MN_API_KEY", "ollama")
+
+    if not _is_local(base_url):
+        print(
+            f"Warning: sending transcript to remote endpoint ({base_url}). "
+            f"Ensure you have appropriate data handling agreements in place "
+            f"before sending clinical data to cloud APIs.",
+            file=sys.stderr,
+        )
 
     est = _estimate_tokens(prompt)
     if est > _TOKEN_WARNING_THRESHOLD:
