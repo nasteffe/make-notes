@@ -1,0 +1,103 @@
+# mn.toml — make-notes configuration file
+#
+# Place this file at either:
+#   ./mn.toml            (project-local, checked first)
+#   ~/.config/mn.toml    (user-level fallback)
+#
+# All keys are optional. CLI flags always override values set here.
+# Uncomment and edit to set your defaults.
+
+
+[transcribe]
+
+# Whisper model size.  Larger models are slower but more accurate.
+# Options: tiny, base, small, medium, large-v3
+# For clinical vocabulary, large-v3 is significantly more accurate.
+# Default: "base"
+# model = "large-v3"
+
+# Compute device for whisper inference.
+# Options: cpu, cuda
+# Default: "cpu"
+# device = "cuda"
+
+# Numeric precision / quantization for whisper.
+# Options: int8, float16, float32
+# int8 is fastest and uses least memory; float16 requires a GPU.
+# Default: "int8"
+# compute_type = "float16"
+
+# Number of speakers.  Set this when you know exactly how many people
+# are in the recording.  Improves diarization accuracy.
+# Default: auto-detected
+# num_speakers = 2
+
+# Speaker count range.  Use instead of num_speakers when the count
+# varies across sessions.
+# Default: auto-detected
+# min_speakers = 2
+# max_speakers = 4
+
+# Human-readable speaker labels, in order of first appearance.
+# Replaces the generic SPEAKER_00, SPEAKER_01 labels.
+# Comma-separated string.
+# Default: none (keeps SPEAKER_XX labels)
+# speakers = "Therapist,Client"
+
+
+[summarize]
+
+# Path to the template file used for summarization prompts.
+# Templates are plain text with $-placeholders ($transcript, $speakers,
+# $date, $duration, $client_name).
+# Default: none (must be provided via --template flag)
+# template = "templates/soap.txt"
+
+# LLM API base URL.  Any OpenAI-compatible chat completions endpoint.
+# Works with: ollama, vllm, lm-studio, together, openai, etc.
+# Can also be set via MN_API_BASE env var.
+# Default: "http://localhost:11434/v1" (ollama)
+# base_url = "http://localhost:11434/v1"
+
+# LLM model name to request from the API.
+# Can also be set via MN_MODEL env var.
+# Default: "llama3"
+# model = "llama3.1:8b"
+
+# API key for the LLM endpoint.
+# Can also be set via MN_API_KEY env var.
+# For ollama this is ignored.  For cloud providers, set this or use
+# the env var (preferred — keeps secrets out of config files).
+# Default: "ollama"
+# api_key = "ollama"
+
+# Allow sending transcript data to non-local LLM endpoints.
+# When false (the default), mn refuses to call any endpoint that is
+# not on localhost/127.0.0.1/::1.  This prevents accidental data
+# leakage of sensitive clinical transcripts.
+# Set to true only if you have appropriate BAAs in place.
+# Default: false
+# allow_remote = false
+
+# Client name for the $client_name template placeholder.
+# Default: "Client"
+# client_name = "Client"
+
+# Session date for the $date template placeholder (YYYY-MM-DD).
+# Default: today's date
+# session_date = "2026-01-15"
+
+
+[redact]
+
+# Enable PII redaction before summarization.
+# When true, phone numbers, SSNs, email addresses, dates, and street
+# addresses are replaced with [PHONE], [SSN], [EMAIL], [DATE], [ADDRESS]
+# before the transcript is sent to the LLM.
+# Default: false
+# enabled = true
+
+# Comma-separated names to redact.  Each name is replaced with [NAME]
+# (case-insensitive, word-boundary match).
+# Default: none
+# names = "John Doe,Jane Smith"
