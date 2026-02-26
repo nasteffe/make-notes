@@ -176,3 +176,30 @@ class TestApplyConfig:
         config = {"transcribe": {"num_speakers": 3}}
         apply_config(args, config)
         assert args.num_speakers == 3
+
+    # -- allow_remote (boolean / store_true handling) -----------------------
+
+    def test_allow_remote_from_config(self):
+        args = self._make_args(allow_remote=False)
+        config = {"summarize": {"allow_remote": True}}
+        apply_config(args, config)
+        assert args.allow_remote is True
+
+    def test_allow_remote_cli_flag_overrides_config(self):
+        args = self._make_args(allow_remote=True)
+        config = {"summarize": {"allow_remote": False}}
+        apply_config(args, config)
+        assert args.allow_remote is True  # CLI wins
+
+    def test_allow_remote_false_in_config_does_not_enable(self):
+        args = self._make_args(allow_remote=False)
+        config = {"summarize": {"allow_remote": False}}
+        apply_config(args, config)
+        assert args.allow_remote is False
+
+    def test_allow_remote_missing_attribute_skipped(self):
+        # Namespace without allow_remote (e.g. mn-transcribe)
+        args = argparse.Namespace(model=None)
+        config = {"summarize": {"allow_remote": True}}
+        apply_config(args, config)
+        assert not hasattr(args, "allow_remote")

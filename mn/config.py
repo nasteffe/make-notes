@@ -19,6 +19,7 @@ Config is TOML format:
     base_url = "http://localhost:11434/v1"
     model = "llama3.1:8b"
     client_name = "Client"
+    allow_remote = false
 
     [redact]
     enabled = true
@@ -108,6 +109,12 @@ def apply_config(args, config):
         "session_date": "session_date",
     })
 
+    # Boolean flags (store_true defaults to False, not None, so
+    # _apply_section's "is not None" guard would always skip them).
+    if summarize_cfg.get("allow_remote") and hasattr(args, "allow_remote"):
+        if not args.allow_remote:
+            args.allow_remote = True
+
     # Redaction config.
     if redact_cfg.get("enabled") and hasattr(args, "redact") and not args.redact:
         args.redact = True
@@ -133,6 +140,7 @@ _EXPECTED_TYPES = {
     "client_name": str,
     "session_date": str,
     "names": str,
+    "allow_remote": bool,
 }
 
 
