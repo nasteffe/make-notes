@@ -460,19 +460,19 @@ def batch():
             segments = _transcribe_audio(
                 args, _whisper=whisper, _diarizer=diarizer, quiet=True,
             )
+
+            segments = _apply_redaction(segments, args)
+
+            if args.transcript_only:
+                out_file = output_dir / f"{audio_path.stem}.txt"
+                out_file.write_text(_fmt.fmt(segments, timestamps=True) + "\n")
+            else:
+                result = _call_summarize(segments, args)
+                out_file = output_dir / f"{audio_path.stem}.note.txt"
+                out_file.write_text(result + "\n")
         except SystemExit:
             failed.append(audio_path.name)
             continue
-
-        segments = _apply_redaction(segments, args)
-
-        if args.transcript_only:
-            out_file = output_dir / f"{audio_path.stem}.txt"
-            out_file.write_text(_fmt.fmt(segments, timestamps=True) + "\n")
-        else:
-            result = _call_summarize(segments, args)
-            out_file = output_dir / f"{audio_path.stem}.note.txt"
-            out_file.write_text(result + "\n")
 
         _progress(f"  → {out_file}")
 

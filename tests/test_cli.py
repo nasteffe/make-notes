@@ -580,6 +580,47 @@ class TestBatchCli:
         assert "1 file(s) failed" in err
         assert "0/1" in err
 
+    def test_summarize_failure_continues(self, capsys, monkeypatch, tmp_path):
+        """When LLM summarization fails for one file, others still process."""
+        for name in ["a.wav", "b.wav", "c.wav"]:
+            (tmp_path / name).write_bytes(b"fake")
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-batch", str(tmp_path),
+            "--template", str(template),
+            "--base-url", "http://localhost:11434/v1",
+            "--llm-model", "m", "--api-key", "k",
+            "-vv",
+        ])
+
+        call_count = 0
+
+        def flaky_llm(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise httpx.ConnectError("LLM is down")
+            return _mock_llm_response("Generated note")
+
+        with patch("mn.transcribe.load_whisper", return_value="w"):
+            with patch("mn.transcribe.load_diarizer", return_value="d"):
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            return_value=_sample_segments()):
+                    with patch("mn.summarize.httpx.post",
+                                side_effect=flaky_llm):
+                        cli.batch()
+
+        # a and c should have notes; b should not.
+        assert (tmp_path / "a.note.txt").exists()
+        assert not (tmp_path / "b.note.txt").exists()
+        assert (tmp_path / "c.note.txt").exists()
+
+        err = capsys.readouterr().err
+        assert "1 file(s) failed" in err
+        assert "b.wav" in err
+
 
 # -- Error handling helpers -------------------------------------------------
 
