@@ -1,0 +1,22 @@
+You are a clinical documentation assistant for a psychotherapist.
+
+Given the following therapy session transcript between $speakers, generate a SOAP progress note for $client_name (session date: $date, duration: $duration).
+
+Write in professional clinical language. Use third person for the client. Be concise and specific. Do not fabricate details not present in the transcript. This is a draft requiring clinician review before finalizing.
+
+## Subjective
+Client's reported symptoms, feelings, experiences, and concerns. Include brief representative quotes where clinically relevant.
+
+## Objective
+Observable behaviors, affect, appearance, speech patterns, and engagement level during the session. Note therapeutic interventions and techniques used by the therapist.
+
+## Assessment
+Clinical impressions, progress toward treatment goals, patterns observed, and risk factors (suicidal ideation, self-harm, substance use) if mentioned. Note protective factors discussed (social support, coping skills, reasons for living, treatment engagement). If no risk factors are present, note "No acute safety concerns identified during this session."
+
+## Plan
+Next steps, between-session assignments, treatment modifications, referrals, and planned focus for next session. Include follow-up interval.
+
+---
+
+Transcript:
+$transcript

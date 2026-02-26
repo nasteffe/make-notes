@@ -1,0 +1,44 @@
+## Recommended ollama models for clinical note generation
+##
+## Pull one of these, then set MN_MODEL to match:
+##
+##   ollama pull llama3.1:8b
+##   export MN_MODEL=llama3.1:8b
+##
+## Models are listed in order of recommendation for this use case.
+## Clinical summarization needs: factual accuracy (no hallucination),
+## structured output, professional clinical vocabulary.
+##
+## Tested models:
+##
+##   llama3.1:8b       Good balance of speed and quality. Runs on 8GB RAM.
+##                     Sufficient for most progress notes.
+##
+##   llama3.1:70b      Best quality for complex cases. Needs ~40GB RAM.
+##                     Recommended if you have the hardware.
+##
+##   mistral:7b        Fast, good at structured output. Slightly less
+##                     clinical vocabulary than llama3.
+##
+##   gemma2:9b         Strong at following template structure.
+##                     Good alternative to llama3.1:8b.
+##
+##   phi3:14b          Microsoft model, good reasoning. Mid-range hardware.
+##
+## Tips:
+##
+##   - For therapy notes, accuracy > creativity. Temperature is set to 0.3.
+##   - Larger models hallucinate less. If a note contains fabricated details,
+##     try a larger model or a more specific template.
+##   - Local inference keeps PHI on your machine. This matters.
+##   - Run `ollama list` to see what you have installed.
+##
+## To create a custom ollama model with a system prompt baked in:
+##
+##   FROM llama3.1:8b
+##   SYSTEM "You are a clinical documentation assistant for a psychotherapist. Generate professional, accurate therapy notes. Never fabricate clinical details."
+##   PARAMETER temperature 0.3
+##
+## Save as Modelfile.ollama, then:
+##   ollama create mn-clinical -f Modelfile.ollama
+##   export MN_MODEL=mn-clinical
