@@ -53,26 +53,9 @@ def _check_audio_file(path):
         _die(f"Audio file is empty: {path}")
 
 
-def _check_hf_token(args):
-    """Resolve HF token from env (preferred) or deprecated --hf-token flag.
-
-    If --hf-token was used, emit a deprecation warning and move the value
-    into the environment so it never stays visible in /proc/*/cmdline.
-    """
-    cli_token = getattr(args, "hf_token", None)
-    if cli_token:
-        _log.warn(
-            "Warning: --hf-token is deprecated and exposes the token in "
-            "process listings. Set the HF_TOKEN environment variable "
-            "instead."
-        )
-        # Move to env so downstream code reads it from there, and clear
-        # the attribute to avoid keeping it in the Namespace.
-        os.environ.setdefault("HF_TOKEN", cli_token)
-        args.hf_token = None
-
-    token = os.environ.get("HF_TOKEN")
-    if not token:
+def _check_hf_token():
+    """Verify that the HF_TOKEN environment variable is set."""
+    if not os.environ.get("HF_TOKEN"):
         _die(
             "HuggingFace token required for speaker diarization.\n"
             "Set the HF_TOKEN environment variable.\n"
@@ -133,8 +116,6 @@ def _add_diarization_args(p):
                    help="minimum number of speakers")
     p.add_argument("--max-speakers", type=int, default=None,
                    help="maximum number of speakers")
-    p.add_argument("--hf-token", default=None,
-                   help=argparse.SUPPRESS)  # deprecated: use HF_TOKEN env var
     p.add_argument("--speakers", default=None,
                    help="comma-separated speaker names (e.g. Therapist,Client)")
 
@@ -170,7 +151,6 @@ def _transcribe_audio(args, _whisper=None, _diarizer=None, quiet=False):
             num_speakers=args.num_speakers,
             min_speakers=args.min_speakers,
             max_speakers=args.max_speakers,
-            hf_token=args.hf_token,
             _whisper=_whisper,
             _diarizer=_diarizer,
         )
@@ -280,7 +260,7 @@ def transcribe():
     apply_config(args, load_config())
 
     _check_audio_file(args.audio)
-    _check_hf_token(args)
+    _check_hf_token()
 
     segments = _transcribe_audio(args)
     print(_transcribe.to_jsonl(segments))
@@ -449,7 +429,7 @@ def batch():
     apply_config(args, load_config())
 
     _check_template(args.template)
-    _check_hf_token(args)
+    _check_hf_token()
 
     audio_dir = Path(args.directory)
     files = sorted(audio_dir.glob(f"*{args.ext}"))
@@ -466,7 +446,7 @@ def batch():
         whisper = _transcribe.load_whisper(
             args.model, args.device, args.compute_type,
         )
-        diarizer = _transcribe.load_diarizer(args.hf_token)
+        diarizer = _transcribe.load_diarizer()
     except (OSError, RuntimeError, ValueError) as e:
         _die(f"Failed to load models: {e}")
 
@@ -529,7 +509,7 @@ def main():
 
     _check_audio_file(args.audio)
     _check_template(args.template)
-    _check_hf_token(args)
+    _check_hf_token()
 
     segments = _transcribe_audio(args)
     segments = _apply_redaction(segments, args)

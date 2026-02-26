@@ -14,6 +14,7 @@ The corrected segments are written as JSON lines to stdout.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,11 @@ def from_editable(text):
 def edit(segments):
     """Open segments in $EDITOR, return corrected segments."""
     editor = os.environ.get("EDITOR", "vi")
+    resolved = shutil.which(editor)
+    if resolved is None:
+        raise FileNotFoundError(
+            f"Editor {editor!r} not found. Set $EDITOR to a valid command."
+        )
     text = to_editable(segments)
 
     # Create a private temp directory so the transcript is never
@@ -103,7 +109,7 @@ def edit(segments):
         f.write(text)
 
     try:
-        subprocess.run([editor, tmp], check=True)
+        subprocess.run([resolved, tmp], check=True)
         with open(tmp) as f:
             edited = f.read()
     finally:

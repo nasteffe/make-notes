@@ -97,7 +97,6 @@ def apply_config(args, config):
         "min_speakers": "min_speakers",
         "max_speakers": "max_speakers",
         "speakers": "speakers",
-        "hf_token": "hf_token",
     })
 
     _apply_section(args, summarize_cfg, {
@@ -133,7 +132,6 @@ _EXPECTED_TYPES = {
     "min_speakers": int,
     "max_speakers": int,
     "speakers": str,
-    "hf_token": str,
     "template": str,
     "base_url": str,
     "api_key": str,

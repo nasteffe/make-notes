@@ -1,8 +1,13 @@
 """Tests for mn.edit — round-trip editable transcript format."""
 
+import os
+import stat
+import subprocess
+from unittest.mock import patch
+
 import pytest
 
-from mn.edit import _parse_time, from_editable, to_editable
+from mn.edit import _parse_time, edit, from_editable, to_editable
 from mn.transcribe import Segment
 
 
@@ -191,3 +196,104 @@ class TestParseTime:
     def test_invalid_empty(self):
         with pytest.raises(ValueError, match="Invalid timestamp"):
             _parse_time("")
+
+
+# -- edit() (subprocess / editor launcher) ----------------------------------
+
+
+class TestEditFunction:
+
+    def _segments(self):
+        return [Segment("A", "Original text.", 0.0, 5.0)]
+
+    def test_happy_path_returns_edited_segments(self, monkeypatch, tmp_path):
+        """Editor modifies the text; edit() returns the corrected segments."""
+        # Use a real script as the editor: replaces "Original" with "Edited".
+        script = tmp_path / "fake-editor.sh"
+        script.write_text('#!/bin/sh\nsed -i "s/Original/Edited/" "$1"\n')
+        script.chmod(0o755)
+
+        monkeypatch.setenv("EDITOR", str(script))
+        result = edit(self._segments())
+        assert len(result) == 1
+        assert result[0].text == "Edited text."
+
+    def test_editor_not_found_raises(self, monkeypatch):
+        monkeypatch.setenv("EDITOR", "nonexistent-editor-xyz")
+        with pytest.raises(FileNotFoundError, match="not found"):
+            edit(self._segments())
+
+    def test_editor_failure_raises(self, monkeypatch, tmp_path):
+        """Non-zero exit from the editor should propagate as CalledProcessError."""
+        script = tmp_path / "fail-editor.sh"
+        script.write_text("#!/bin/sh\nexit 1\n")
+        script.chmod(0o755)
+
+        monkeypatch.setenv("EDITOR", str(script))
+        with pytest.raises(subprocess.CalledProcessError):
+            edit(self._segments())
+
+    def test_temp_file_is_private(self, monkeypatch, tmp_path):
+        """Temp file should be created with mode 0o600 (owner-only)."""
+        script = tmp_path / "check-perms.sh"
+        # The editor just reads the file — we inspect perms before it runs.
+        script.write_text("#!/bin/sh\ntrue\n")
+        script.chmod(0o755)
+
+        permissions = []
+        original_run = subprocess.run
+
+        def spy_run(cmd, **kwargs):
+            # cmd[1] is the temp file path
+            mode = os.stat(cmd[1]).st_mode
+            permissions.append(stat.S_IMODE(mode))
+            return original_run(cmd, **kwargs)
+
+        monkeypatch.setenv("EDITOR", str(script))
+        with patch("mn.edit.subprocess.run", side_effect=spy_run):
+            edit(self._segments())
+
+        assert permissions[0] == 0o600
+
+    def test_temp_files_cleaned_up(self, monkeypatch, tmp_path):
+        """Temp dir and file should be removed after edit() returns."""
+        script = tmp_path / "noop-editor.sh"
+        script.write_text("#!/bin/sh\ntrue\n")
+        script.chmod(0o755)
+
+        created_paths = []
+        original_run = subprocess.run
+
+        def spy_run(cmd, **kwargs):
+            created_paths.append(cmd[1])
+            return original_run(cmd, **kwargs)
+
+        monkeypatch.setenv("EDITOR", str(script))
+        with patch("mn.edit.subprocess.run", side_effect=spy_run):
+            edit(self._segments())
+
+        assert len(created_paths) == 1
+        assert not os.path.exists(created_paths[0])
+        assert not os.path.exists(os.path.dirname(created_paths[0]))
+
+    def test_cleanup_on_editor_failure(self, monkeypatch, tmp_path):
+        """Temp files should be cleaned up even when the editor fails."""
+        script = tmp_path / "fail-editor.sh"
+        script.write_text("#!/bin/sh\nexit 1\n")
+        script.chmod(0o755)
+
+        created_paths = []
+        original_run = subprocess.run
+
+        def spy_run(cmd, **kwargs):
+            created_paths.append(cmd[1])
+            return original_run(cmd, **kwargs)
+
+        monkeypatch.setenv("EDITOR", str(script))
+        with pytest.raises(subprocess.CalledProcessError):
+            with patch("mn.edit.subprocess.run", side_effect=spy_run):
+                edit(self._segments())
+
+        assert len(created_paths) == 1
+        assert not os.path.exists(created_paths[0])
+        assert not os.path.exists(os.path.dirname(created_paths[0]))

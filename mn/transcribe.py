@@ -55,11 +55,11 @@ def transcribe(audio_path, model_size="base", device="cpu", compute_type="int8",
 # -- Stage 2: Diarize ---------------------------------------------------
 
 
-def load_diarizer(hf_token=None):
+def load_diarizer():
     """Load the pyannote diarization pipeline. Reuse to avoid reloading."""
     from pyannote.audio import Pipeline
 
-    token = hf_token or os.environ.get("HF_TOKEN")
+    token = os.environ.get("HF_TOKEN")
     return Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
         use_auth_token=token,
@@ -67,13 +67,13 @@ def load_diarizer(hf_token=None):
 
 
 def diarize(audio_path, num_speakers=None, min_speakers=None,
-            max_speakers=None, hf_token=None, _pipeline=None):
+            max_speakers=None, _pipeline=None):
     """Audio file → list of speaker segment dicts.
 
     Pass _pipeline (a pyannote Pipeline) to skip loading — useful for batch.
     """
     if _pipeline is None:
-        _pipeline = load_diarizer(hf_token)
+        _pipeline = load_diarizer()
 
     params = {}
     if num_speakers is not None:
@@ -153,7 +153,7 @@ def align(words, speaker_segments):
 def transcribe_and_diarize(audio_path, model_size="base", device="cpu",
                            compute_type="int8", num_speakers=None,
                            min_speakers=None, max_speakers=None,
-                           hf_token=None, _whisper=None, _diarizer=None):
+                           _whisper=None, _diarizer=None):
     """Full pipeline: audio file → list of diarized Segments.
 
     Pass _whisper and _diarizer to reuse pre-loaded models (batch mode).
@@ -161,7 +161,7 @@ def transcribe_and_diarize(audio_path, model_size="base", device="cpu",
     words = transcribe(audio_path, model_size, device, compute_type,
                        _model=_whisper)
     speakers = diarize(audio_path, num_speakers, min_speakers,
-                       max_speakers, hf_token, _pipeline=_diarizer)
+                       max_speakers, _pipeline=_diarizer)
     return align(words, speakers)
 
 

@@ -256,7 +256,6 @@ class TestTranscribeCli:
                 num_speakers=3,
                 min_speakers=2,
                 max_speakers=4,
-                hf_token=None,
                 _whisper=None,
                 _diarizer=None,
             )
@@ -412,7 +411,6 @@ class TestMainCli:
                 num_speakers=2,
                 min_speakers=None,
                 max_speakers=None,
-                hf_token=None,
                 _whisper=None,
                 _diarizer=None,
             )
@@ -520,6 +518,68 @@ class TestBatchCli:
         with pytest.raises(SystemExit):
             cli.batch()
 
+    def test_mid_batch_failure_continues(self, capsys, monkeypatch, tmp_path):
+        """When one file fails transcription, remaining files still process."""
+        for name in ["a.wav", "b.wav", "c.wav"]:
+            (tmp_path / name).write_bytes(b"fake")
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-batch", str(tmp_path),
+            "--template", str(template),
+            "--transcript-only", "-vv",
+        ])
+
+        call_count = 0
+
+        def flaky_transcribe(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                # Second file fails.
+                raise RuntimeError("Transcription failed")
+            return _sample_segments()
+
+        with patch("mn.transcribe.load_whisper", return_value="w"):
+            with patch("mn.transcribe.load_diarizer", return_value="d"):
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            side_effect=flaky_transcribe):
+                    cli.batch()
+
+        # a.txt and c.txt should exist; b.txt should not.
+        assert (tmp_path / "a.txt").exists()
+        assert not (tmp_path / "b.txt").exists()
+        assert (tmp_path / "c.txt").exists()
+
+        # Progress output should mention the failure.
+        err = capsys.readouterr().err
+        assert "1 file(s) failed" in err
+        assert "b.wav" in err
+
+    def test_all_files_fail(self, capsys, monkeypatch, tmp_path):
+        """When all files fail, batch still completes with a summary."""
+        (tmp_path / "x.wav").write_bytes(b"fake")
+        template = tmp_path / "t.txt"
+        template.write_text("$transcript")
+
+        monkeypatch.setattr("sys.argv", [
+            "mn-batch", str(tmp_path),
+            "--template", str(template),
+            "--transcript-only", "-vv",
+        ])
+
+        with patch("mn.transcribe.load_whisper", return_value="w"):
+            with patch("mn.transcribe.load_diarizer", return_value="d"):
+                with patch("mn.transcribe.transcribe_and_diarize",
+                            side_effect=RuntimeError("fail")):
+                    cli.batch()
+
+        assert not (tmp_path / "x.txt").exists()
+        err = capsys.readouterr().err
+        assert "1 file(s) failed" in err
+        assert "0/1" in err
+
 
 # -- Error handling helpers -------------------------------------------------
 
@@ -560,31 +620,12 @@ class TestCheckHfToken:
 
     def test_passes_with_env_var(self, monkeypatch):
         monkeypatch.setenv("HF_TOKEN", "hf_test")
-        import argparse
-        args = argparse.Namespace(hf_token=None)
-        _check_hf_token(args)  # should not raise
-
-    def test_deprecated_flag_warns_and_moves_to_env(self, monkeypatch, capsys):
-        from mn import log as _log
-        _log.configure(verbose=1)
-        monkeypatch.delenv("HF_TOKEN", raising=False)
-        import argparse
-        args = argparse.Namespace(hf_token="hf_from_flag")
-        _check_hf_token(args)
-        # Token should be moved to env, cleared from args.
-        assert args.hf_token is None
-        assert os.environ.get("HF_TOKEN") == "hf_from_flag"
-        err = capsys.readouterr().err
-        assert "deprecated" in err.lower()
-        # Clean up.
-        monkeypatch.delenv("HF_TOKEN", raising=False)
+        _check_hf_token()  # should not raise
 
     def test_fails_without_token(self, monkeypatch):
         monkeypatch.delenv("HF_TOKEN", raising=False)
-        import argparse
-        args = argparse.Namespace(hf_token=None)
         with pytest.raises(SystemExit):
-            _check_hf_token(args)
+            _check_hf_token()
 
 
 class TestCheckTemplate:

@@ -93,7 +93,7 @@ class TestApplyConfig:
         defaults = dict(
             model=None, device=None, compute_type=None,
             num_speakers=None, min_speakers=None, max_speakers=None,
-            speakers=None, hf_token=None,
+            speakers=None,
             template=None, base_url=None, llm_model=None, api_key=None,
             client_name=None, session_date=None,
             redact=False, redact_names=None,
