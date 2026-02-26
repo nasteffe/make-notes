@@ -7,9 +7,10 @@ Requires: pip install sounddevice soundfile
 """
 
 import signal
-import sys
 import tempfile
 from pathlib import Path
+
+from . import log as _log
 
 
 def record(output_path=None, sample_rate=16000, channels=1, duration=None):
@@ -32,7 +33,7 @@ def record(output_path=None, sample_rate=16000, channels=1, duration=None):
 
     def _callback(indata, frame_count, time_info, status):
         if status:
-            print(status, file=sys.stderr)
+            _log.warn(str(status))
         frames.append(indata.copy())
 
     def _stop(sig, frame):
@@ -41,7 +42,7 @@ def record(output_path=None, sample_rate=16000, channels=1, duration=None):
 
     prev_handler = signal.signal(signal.SIGINT, _stop)
 
-    print(f"Recording → {output_path}  (Ctrl-C to stop)", file=sys.stderr)
+    _log.progress(f"Recording → {output_path}  (Ctrl-C to stop)")
 
     try:
         with sd.InputStream(samplerate=sample_rate, channels=channels,
@@ -55,7 +56,7 @@ def record(output_path=None, sample_rate=16000, channels=1, duration=None):
         signal.signal(signal.SIGINT, prev_handler)
 
     if not frames:
-        print("No audio captured.", file=sys.stderr)
+        _log.warn("No audio captured.")
         return None
 
     import numpy as np
@@ -63,5 +64,5 @@ def record(output_path=None, sample_rate=16000, channels=1, duration=None):
     sf.write(output_path, audio, sample_rate)
     seconds = len(audio) / sample_rate
     m, s = divmod(int(seconds), 60)
-    print(f"Saved {m}:{s:02d} of audio.", file=sys.stderr)
+    _log.progress(f"Saved {m}:{s:02d} of audio.")
     return output_path
